@@ -176,6 +176,7 @@ const handleComplete = async () => {
     if (error) throw error;
 
     setLoading(false);
+  
     Alert.alert('Success', 'Profile setup completed!');
     // The realtime listener in App.js will automatically detect the profile update
     // and navigate to MainStack

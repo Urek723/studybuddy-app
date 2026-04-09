@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useState, useCallback } from 'react';
 import {
   View,
   Text,
@@ -12,9 +12,6 @@ import { MaterialCommunityIcons } from '@expo/vector-icons';
 import { supabase } from '../../config/supabase';
 import { useAuth } from '../../contexts/AuthContext';
 
-// ============================================================================
-// GAME TYPE ICONS AND LABELS
-// ============================================================================
 const GAME_CONFIG = {
   tictactoe: { icon: 'gamepad-variant', label: 'Tic-Tac-Toe', color: '#6366f1' },
   rockpaperscissors: { icon: 'hand-back-right', label: 'Rock Paper Scissors', color: '#8b5cf6' },
@@ -29,19 +26,14 @@ export default function LeaderboardScreen({ route }) {
   const { user } = useAuth();
 
   const [loading, setLoading] = useState(true);
-  const [activeTab, setActiveTab] = useState('overall'); // 'overall' or game type
+  const [activeTab, setActiveTab] = useState('overall');
   const [rankings, setRankings] = useState([]);
   const [gameTypes, setGameTypes] = useState([]);
-
-  useEffect(() => {
-    fetchLeaderboard();
-    setupRealtimeSubscription();
-  }, [groupId, activeTab]);
 
   // ============================================================================
   // FETCH LEADERBOARD DATA
   // ============================================================================
-  const fetchLeaderboard = async () => {
+  const fetchLeaderboard = useCallback(async () => {
     setLoading(true);
     try {
       if (activeTab === 'overall') {
@@ -56,14 +48,58 @@ export default function LeaderboardScreen({ route }) {
     } finally {
       setLoading(false);
     }
-  };
+  }, [groupId, activeTab]);
 
-  // ────────────────────────────────────────────────────────────────────────────
-  // OVERALL RANKINGS (All Games + Quizzes Combined)
-  // ────────────────────────────────────────────────────────────────────────────
+  useEffect(() => {
+    fetchLeaderboard();
+  }, [fetchLeaderboard]);
+
+  // Fix MODERATE-6: return cleanup from useEffect, not from setupRealtimeSubscription
+  useEffect(() => {
+    const gameScoresChannel = supabase
+      .channel(`game_scores_changes_${groupId}_${activeTab}`)
+      .on(
+        'postgres_changes',
+        {
+          event: '*',
+          schema: 'public',
+          table: 'game_scores',
+          filter: `group_id=eq.${groupId}`,
+        },
+        () => {
+          console.log('Game score updated - refreshing leaderboard');
+          fetchLeaderboard();
+        }
+      )
+      .subscribe();
+
+    const quizAttemptsChannel = supabase
+      .channel(`quiz_attempts_changes_${groupId}_${activeTab}`)
+      .on(
+        'postgres_changes',
+        {
+          event: '*',
+          schema: 'public',
+          table: 'quiz_attempts',
+        },
+        () => {
+          console.log('Quiz attempt updated - refreshing leaderboard');
+          fetchLeaderboard();
+        }
+      )
+      .subscribe();
+
+    return () => {
+      supabase.removeChannel(gameScoresChannel);
+      supabase.removeChannel(quizAttemptsChannel);
+    };
+  }, [groupId, activeTab, fetchLeaderboard]);
+
+  // ============================================================================
+  // OVERALL RANKINGS
+  // ============================================================================
   const fetchOverallRankings = async () => {
     try {
-      // Fetch all game scores
       const { data: gameScores, error: gameError } = await supabase
         .from('game_scores')
         .select(`
@@ -72,13 +108,12 @@ export default function LeaderboardScreen({ route }) {
           score,
           game_type,
           mode,
-          profiles!game_scores_user_id_fkey (full_name, avatar_url)
+          profiles (full_name, avatar_url)
         `)
         .eq('group_id', groupId);
 
       if (gameError) throw gameError;
 
-      // Fetch all quiz attempts
       const { data: quizAttempts, error: quizError } = await supabase
         .from('quiz_attempts')
         .select(`
@@ -86,16 +121,14 @@ export default function LeaderboardScreen({ route }) {
           user_id,
           score,
           quizzes!inner(group_id),
-          profiles!quiz_attempts_user_id_fkey(full_name, avatar_url)
+          profiles (full_name, avatar_url)
         `)
         .eq('quizzes.group_id', groupId);
 
       if (quizError) throw quizError;
 
-      // Aggregate scores by user
       const scoreMap = {};
 
-      // Add game scores
       (gameScores || []).forEach((item) => {
         const uid = item.user_id;
         if (!scoreMap[uid]) {
@@ -110,8 +143,7 @@ export default function LeaderboardScreen({ route }) {
         }
         scoreMap[uid].totalScore += item.score || 0;
         scoreMap[uid].gamesPlayed += 1;
-        
-        // Track breakdown by game type
+
         const gameType = item.game_type;
         if (!scoreMap[uid].breakdown[gameType]) {
           scoreMap[uid].breakdown[gameType] = { count: 0, score: 0 };
@@ -120,7 +152,6 @@ export default function LeaderboardScreen({ route }) {
         scoreMap[uid].breakdown[gameType].score += item.score || 0;
       });
 
-      // Add quiz scores
       (quizAttempts || []).forEach((item) => {
         const uid = item.user_id;
         if (!scoreMap[uid]) {
@@ -135,7 +166,7 @@ export default function LeaderboardScreen({ route }) {
         }
         scoreMap[uid].totalScore += item.score || 0;
         scoreMap[uid].gamesPlayed += 1;
-        
+
         if (!scoreMap[uid].breakdown.quiz) {
           scoreMap[uid].breakdown.quiz = { count: 0, score: 0 };
         }
@@ -143,20 +174,18 @@ export default function LeaderboardScreen({ route }) {
         scoreMap[uid].breakdown.quiz.score += item.score || 0;
       });
 
-      // Convert to array and sort
       const rankingArray = Object.values(scoreMap)
         .sort((a, b) => b.totalScore - a.totalScore)
-        .map((item, index) => ({
-          ...item,
-          rank: index + 1,
-        }));
+        .map((item, index) => ({ ...item, rank: index + 1 }));
 
       setRankings(rankingArray);
 
-      // Extract available game types
+      // Always derive gameTypes from overall fetch so tabs are always populated
       const types = new Set();
-      gameScores?.forEach(s => types.add(s.game_type));
-      if (quizAttempts?.length > 0) types.add('quizzes');
+      (gameScores || []).forEach(s => {
+        if (s.game_type) types.add(s.game_type);
+      });
+      if ((quizAttempts || []).length > 0) types.add('quizzes');
       setGameTypes(Array.from(types));
 
     } catch (error) {
@@ -164,11 +193,30 @@ export default function LeaderboardScreen({ route }) {
     }
   };
 
-  // ────────────────────────────────────────────────────────────────────────────
+  // ============================================================================
   // GAME-SPECIFIC RANKINGS
-  // ────────────────────────────────────────────────────────────────────────────
+  // ============================================================================
   const fetchGameRankings = async (gameType) => {
     try {
+      // Also refresh gameTypes so tabs don't disappear when switching
+      const { data: allGameScores, error: typesError } = await supabase
+        .from('game_scores')
+        .select('game_type')
+        .eq('group_id', groupId);
+
+      if (!typesError && allGameScores) {
+        const types = new Set(allGameScores.map(s => s.game_type).filter(Boolean));
+
+        const { data: quizCheck } = await supabase
+          .from('quiz_attempts')
+          .select('id, quizzes!inner(group_id)')
+          .eq('quizzes.group_id', groupId)
+          .limit(1);
+
+        if (quizCheck && quizCheck.length > 0) types.add('quizzes');
+        setGameTypes(Array.from(types));
+      }
+
       const { data, error } = await supabase
         .from('game_scores')
         .select(`
@@ -177,7 +225,7 @@ export default function LeaderboardScreen({ route }) {
           score,
           mode,
           played_at,
-          profiles!game_scores_user_id_fkey (full_name, avatar_url)
+          profiles (full_name, avatar_url)
         `)
         .eq('group_id', groupId)
         .eq('game_type', gameType)
@@ -185,7 +233,6 @@ export default function LeaderboardScreen({ route }) {
 
       if (error) throw error;
 
-      // Aggregate by user
       const scoreMap = {};
       (data || []).forEach((item) => {
         const uid = item.user_id;
@@ -205,7 +252,6 @@ export default function LeaderboardScreen({ route }) {
         if (item.score > scoreMap[uid].bestScore) {
           scoreMap[uid].bestScore = item.score;
         }
-        // Update last played if newer
         if (new Date(item.played_at) > new Date(scoreMap[uid].lastPlayed)) {
           scoreMap[uid].lastPlayed = item.played_at;
         }
@@ -213,10 +259,7 @@ export default function LeaderboardScreen({ route }) {
 
       const rankingArray = Object.values(scoreMap)
         .sort((a, b) => b.bestScore - a.bestScore)
-        .map((item, index) => ({
-          ...item,
-          rank: index + 1,
-        }));
+        .map((item, index) => ({ ...item, rank: index + 1 }));
 
       setRankings(rankingArray);
     } catch (error) {
@@ -224,11 +267,23 @@ export default function LeaderboardScreen({ route }) {
     }
   };
 
-  // ────────────────────────────────────────────────────────────────────────────
+  // ============================================================================
   // QUIZ-SPECIFIC RANKINGS
-  // ────────────────────────────────────────────────────────────────────────────
+  // ============================================================================
   const fetchQuizRankings = async () => {
     try {
+      // Also refresh gameTypes so tabs don't disappear when switching
+      const { data: allGameScores, error: typesError } = await supabase
+        .from('game_scores')
+        .select('game_type')
+        .eq('group_id', groupId);
+
+      if (!typesError && allGameScores) {
+        const types = new Set(allGameScores.map(s => s.game_type).filter(Boolean));
+        types.add('quizzes');
+        setGameTypes(Array.from(types));
+      }
+
       const { data, error } = await supabase
         .from('quiz_attempts')
         .select(`
@@ -238,7 +293,7 @@ export default function LeaderboardScreen({ route }) {
           total_points,
           completed_at,
           quizzes!inner(group_id),
-          profiles!quiz_attempts_user_id_fkey(full_name, avatar_url)
+          profiles (full_name, avatar_url)
         `)
         .eq('quizzes.group_id', groupId);
 
@@ -261,21 +316,17 @@ export default function LeaderboardScreen({ route }) {
         scoreMap[uid].quizzesTaken += 1;
       });
 
-      // Calculate average percentage
-      Object.values(scoreMap).forEach(user => {
-        const attempts = data.filter(a => a.user_id === user.user_id);
+      Object.values(scoreMap).forEach(u => {
+        const attempts = data.filter(a => a.user_id === u.user_id);
         const totalPercentage = attempts.reduce((sum, a) => {
-          return sum + ((a.score / a.total_points) * 100);
+          return sum + ((a.score / (a.total_points || 1)) * 100);
         }, 0);
-        user.avgPercentage = Math.round(totalPercentage / attempts.length);
+        u.avgPercentage = Math.round(totalPercentage / attempts.length);
       });
 
       const rankingArray = Object.values(scoreMap)
         .sort((a, b) => b.totalScore - a.totalScore)
-        .map((item, index) => ({
-          ...item,
-          rank: index + 1,
-        }));
+        .map((item, index) => ({ ...item, rank: index + 1 }));
 
       setRankings(rankingArray);
     } catch (error) {
@@ -284,60 +335,13 @@ export default function LeaderboardScreen({ route }) {
   };
 
   // ============================================================================
-  // REAL-TIME UPDATES
-  // ============================================================================
-  const setupRealtimeSubscription = () => {
-    // Subscribe to game_scores changes
-    const gameScoresChannel = supabase
-      .channel('game_scores_changes')
-      .on(
-        'postgres_changes',
-        {
-          event: '*',
-          schema: 'public',
-          table: 'game_scores',
-          filter: `group_id=eq.${groupId}`,
-        },
-        () => {
-          console.log('Game score updated - refreshing leaderboard');
-          fetchLeaderboard();
-        }
-      )
-      .subscribe();
-
-    // Subscribe to quiz_attempts changes
-    const quizAttemptsChannel = supabase
-      .channel('quiz_attempts_changes')
-      .on(
-        'postgres_changes',
-        {
-          event: '*',
-          schema: 'public',
-          table: 'quiz_attempts',
-        },
-        () => {
-          console.log('Quiz attempt updated - refreshing leaderboard');
-          fetchLeaderboard();
-        }
-      )
-      .subscribe();
-
-    return () => {
-      supabase.removeChannel(gameScoresChannel);
-      supabase.removeChannel(quizAttemptsChannel);
-    };
-  };
-
-  // ============================================================================
   // RENDER FUNCTIONS
   // ============================================================================
   const renderRankItem = ({ item }) => {
     const isCurrentUser = item.user_id === user.id;
-    const config = GAME_CONFIG[activeTab] || {};
 
     return (
       <View style={[styles.rankCard, isCurrentUser && styles.currentUserCard]}>
-        {/* Rank Badge */}
         <View style={[
           styles.rankBadge,
           item.rank === 1 && styles.rank1,
@@ -355,24 +359,23 @@ export default function LeaderboardScreen({ route }) {
           )}
         </View>
 
-        {/* User Info */}
         <View style={styles.userInfo}>
           <Text style={styles.userName}>
             {item.name} {isCurrentUser && '(You)'}
           </Text>
-          
+
           {activeTab === 'overall' && (
             <Text style={styles.userSubtext}>
               {item.gamesPlayed} games played
             </Text>
           )}
-          
+
           {activeTab === 'quizzes' && (
             <Text style={styles.userSubtext}>
               {item.quizzesTaken} quizzes • {item.avgPercentage}% avg
             </Text>
           )}
-          
+
           {activeTab !== 'overall' && activeTab !== 'quizzes' && (
             <Text style={styles.userSubtext}>
               Best: {item.bestScore} • Played: {item.gamesPlayed}
@@ -380,16 +383,11 @@ export default function LeaderboardScreen({ route }) {
           )}
         </View>
 
-        {/* Score */}
         <View style={styles.scoreContainer}>
-          {activeTab === 'overall' && (
-            <Text style={styles.scoreValue}>{item.totalScore}</Text>
-          )}
-          {activeTab === 'quizzes' && (
-            <Text style={styles.scoreValue}>{item.totalScore}</Text>
-          )}
-          {activeTab !== 'overall' && activeTab !== 'quizzes' && (
+          {activeTab !== 'overall' && activeTab !== 'quizzes' ? (
             <Text style={styles.scoreValue}>{item.bestScore}</Text>
+          ) : (
+            <Text style={styles.scoreValue}>{item.totalScore}</Text>
           )}
           <Text style={styles.scoreLabel}>points</Text>
         </View>
@@ -421,14 +419,12 @@ export default function LeaderboardScreen({ route }) {
 
   return (
     <View style={styles.container}>
-      {/* Header */}
       <View style={styles.header}>
         <MaterialCommunityIcons name="trophy" size={32} color="#fbbf24" />
         <Text style={styles.headerTitle}>{groupName}</Text>
         <Text style={styles.headerSubtitle}>Leaderboard</Text>
       </View>
 
-      {/* Tab Selector */}
       <ScrollView
         horizontal
         showsHorizontalScrollIndicator={false}
@@ -468,7 +464,7 @@ export default function LeaderboardScreen({ route }) {
         {gameTypes.filter(t => t !== 'quizzes').map((gameType) => {
           const config = GAME_CONFIG[gameType];
           if (!config) return null;
-          
+
           return (
             <TouchableOpacity
               key={gameType}
@@ -488,7 +484,6 @@ export default function LeaderboardScreen({ route }) {
         })}
       </ScrollView>
 
-      {/* Rankings List */}
       <FlatList
         data={rankings}
         keyExtractor={(item) => item.user_id}
@@ -498,7 +493,6 @@ export default function LeaderboardScreen({ route }) {
         showsVerticalScrollIndicator={false}
       />
 
-      {/* Stats Footer */}
       {rankings.length > 0 && (
         <View style={styles.footer}>
           <View style={styles.footerStat}>
@@ -525,9 +519,6 @@ export default function LeaderboardScreen({ route }) {
   );
 }
 
-// ============================================================================
-// STYLES
-// ============================================================================
 const styles = StyleSheet.create({
   container: {
     flex: 1,

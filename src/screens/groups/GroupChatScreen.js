@@ -26,7 +26,7 @@ import { useRefresh } from '../../contexts/RefreshContext';
 // ============================================================================
 
 // ────────────────────────────────────────────────────────────────────────────
-// TIC-TAC-TOE (Multiplayer + Solo vs AI)
+// TIC-TAC-TOE
 // ────────────────────────────────────────────────────────────────────────────
 function TicTacToeGame({ onClose, groupId, userId, mode }) {
   const [board, setBoard] = useState(Array(9).fill(null));
@@ -47,9 +47,20 @@ function TicTacToeGame({ onClose, groupId, userId, mode }) {
     return null;
   };
 
+  const submitScore = async (score) => {
+    const { error } = await supabase.from('game_scores').insert({
+      user_id: userId,
+      group_id: groupId,
+      game_type: 'tictactoe',
+      score: score,
+      mode: mode,
+    });
+    if (error) console.error('Error submitting tictactoe score:', error);
+  };
+
   const makeMove = (i) => {
     if (board[i] || gameOver) return;
-    
+
     const newBoard = [...board];
     newBoard[i] = turn;
     setBoard(newBoard);
@@ -58,18 +69,17 @@ function TicTacToeGame({ onClose, groupId, userId, mode }) {
     if (win) {
       setWinner(win);
       setGameOver(true);
-      submitScore(win === 'X' ? 100 : 0); // X wins = 100 points
+      submitScore(win === 'X' ? 100 : 0);
       return;
     }
 
     const draw = newBoard.every(Boolean);
     if (draw) {
       setGameOver(true);
-      submitScore(50); // Draw = 50 points
+      submitScore(50);
       return;
     }
 
-    // Solo mode: AI makes move
     if (mode === 'solo' && turn === 'X') {
       setTurn('O');
       setTimeout(() => aiMove(newBoard), 500);
@@ -82,7 +92,7 @@ function TicTacToeGame({ onClose, groupId, userId, mode }) {
     const available = currentBoard
       .map((val, idx) => (val === null ? idx : null))
       .filter((val) => val !== null);
-    
+
     if (available.length === 0) return;
 
     const move = available[Math.floor(Math.random() * available.length)];
@@ -106,21 +116,6 @@ function TicTacToeGame({ onClose, groupId, userId, mode }) {
     }
 
     setTurn('X');
-  };
-
-  const submitScore = async (score) => {
-    try {
-      await supabase.from('game_scores').insert({
-        user_id: userId,
-        group_id: groupId,
-        game_type: 'tictactoe',
-        score: score,
-        mode: mode,
-        played_at: new Date().toISOString(),
-      });
-    } catch (error) {
-      console.error('Error submitting score:', error);
-    }
   };
 
   return (
@@ -155,7 +150,7 @@ function TicTacToeGame({ onClose, groupId, userId, mode }) {
 }
 
 // ────────────────────────────────────────────────────────────────────────────
-// ROCK-PAPER-SCISSORS (Solo vs AI)
+// ROCK-PAPER-SCISSORS
 // ────────────────────────────────────────────────────────────────────────────
 function RockPaperScissorsGame({ onClose, groupId, userId }) {
   const [playerChoice, setPlayerChoice] = useState(null);
@@ -200,21 +195,20 @@ function RockPaperScissorsGame({ onClose, groupId, userId }) {
   };
 
   const endGame = async () => {
-    try {
-      await supabase.from('game_scores').insert({
-        user_id: userId,
-        group_id: groupId,
-        game_type: 'rockpaperscissors',
-        score: score,
-        mode: 'solo',
-        played_at: new Date().toISOString(),
-      });
-      Alert.alert('Game Saved!', `Final Score: ${score} (${rounds} rounds)`);
-      onClose();
-    } catch (error) {
-      console.error('Error submitting score:', error);
+    const { error } = await supabase.from('game_scores').insert({
+      user_id: userId,
+      group_id: groupId,
+      game_type: 'rockpaperscissors',
+      score: score,
+      mode: 'solo',
+    });
+    if (error) {
+      console.error('Error submitting rockpaperscissors score:', error);
       Alert.alert('Error', 'Failed to save score');
+      return;
     }
+    Alert.alert('Game Saved!', `Final Score: ${score} (${rounds} rounds)`);
+    onClose();
   };
 
   return (
@@ -227,30 +221,22 @@ function RockPaperScissorsGame({ onClose, groupId, userId }) {
         <View style={styles.rpsResultContainer}>
           <View style={styles.rpsChoice}>
             <Text style={styles.rpsLabel}>You</Text>
-            <MaterialCommunityIcons
-              name={icons[playerChoice]}
-              size={48}
-              color="#6366f1"
-            />
+            <MaterialCommunityIcons name={icons[playerChoice]} size={48} color="#6366f1" />
             <Text style={styles.rpsChoiceText}>{playerChoice}</Text>
           </View>
           <Text style={styles.rpsVs}>VS</Text>
           <View style={styles.rpsChoice}>
             <Text style={styles.rpsLabel}>AI</Text>
-            <MaterialCommunityIcons
-              name={icons[aiChoice]}
-              size={48}
-              color="#ef4444"
-            />
+            <MaterialCommunityIcons name={icons[aiChoice]} size={48} color="#ef4444" />
             <Text style={styles.rpsChoiceText}>{aiChoice}</Text>
           </View>
         </View>
       )}
 
       {result && (
-        <Text style={[styles.rpsResult, 
+        <Text style={[styles.rpsResult,
           result === 'win' && styles.rpsWin,
-          result === 'lose' && styles.rpsLose
+          result === 'lose' && styles.rpsLose,
         ]}>
           {result === 'win' ? 'You Win! +30' : result === 'lose' ? 'You Lose! +0' : 'Draw! +10'}
         </Text>
@@ -263,11 +249,7 @@ function RockPaperScissorsGame({ onClose, groupId, userId }) {
             style={styles.rpsButton}
             onPress={() => playRound(choice)}
           >
-            <MaterialCommunityIcons
-              name={icons[choice]}
-              size={40}
-              color="#6366f1"
-            />
+            <MaterialCommunityIcons name={icons[choice]} size={40} color="#6366f1" />
             <Text style={styles.rpsButtonText}>{choice}</Text>
           </TouchableOpacity>
         ))}
@@ -281,14 +263,15 @@ function RockPaperScissorsGame({ onClose, groupId, userId }) {
 }
 
 // ────────────────────────────────────────────────────────────────────────────
-// MEMORY CARDS (Solo)
+// MEMORY CARDS
 // ────────────────────────────────────────────────────────────────────────────
 function MemoryCardsGame({ onClose, groupId, userId }) {
   const [cards, setCards] = useState([]);
   const [flipped, setFlipped] = useState([]);
   const [matched, setMatched] = useState([]);
   const [moves, setMoves] = useState(0);
-  const [score, setScore] = useState(1000); // Start at 1000, deduct per move
+  const [score, setScore] = useState(1000);
+  const matchedCountRef = React.useRef(0);
 
   useEffect(() => {
     initializeGame();
@@ -300,6 +283,23 @@ function MemoryCardsGame({ onClose, groupId, userId }) {
       .sort(() => Math.random() - 0.5)
       .map((symbol, index) => ({ id: index, symbol }));
     setCards(deck);
+    matchedCountRef.current = 0;
+  };
+
+  const finishGame = async (finalScore) => {
+    const { error } = await supabase.from('game_scores').insert({
+      user_id: userId,
+      group_id: groupId,
+      game_type: 'memory',
+      score: finalScore,
+      mode: 'solo',
+    });
+    if (error) {
+      console.error('Error submitting memory score:', error);
+    }
+    Alert.alert('Complete!', `Score: ${finalScore}`, [
+      { text: 'OK', onPress: onClose },
+    ]);
   };
 
   const flipCard = (id) => {
@@ -309,45 +309,30 @@ function MemoryCardsGame({ onClose, groupId, userId }) {
     setFlipped(newFlipped);
 
     if (newFlipped.length === 2) {
-      setMoves((prev) => prev + 1);
-      setScore((prev) => Math.max(0, prev - 50)); // Deduct 50 per move
-      checkMatch(newFlipped);
+      const newMoves = moves + 1;
+      const newScore = Math.max(0, score - 50);
+      setMoves(newMoves);
+      setScore(newScore);
+      checkMatch(newFlipped, newScore);
     }
   };
 
-  const checkMatch = (flippedIds) => {
+  const checkMatch = (flippedIds, currentScore) => {
     const [first, second] = flippedIds;
     const firstCard = cards.find((c) => c.id === first);
     const secondCard = cards.find((c) => c.id === second);
 
     if (firstCard.symbol === secondCard.symbol) {
-      setMatched((prev) => [...prev, first, second]);
+      const newMatched = [...matched, first, second];
+      setMatched(newMatched);
       setFlipped([]);
-      
-      // Check if game complete
-      if (matched.length + 2 === cards.length) {
-        finishGame();
+
+      matchedCountRef.current += 2;
+      if (matchedCountRef.current === cards.length) {
+        finishGame(currentScore);
       }
     } else {
       setTimeout(() => setFlipped([]), 1000);
-    }
-  };
-
-  const finishGame = async () => {
-    try {
-      await supabase.from('game_scores').insert({
-        user_id: userId,
-        group_id: groupId,
-        game_type: 'memory',
-        score: score,
-        mode: 'solo',
-        played_at: new Date().toISOString(),
-      });
-      Alert.alert('Complete!', `Score: ${score} (${moves} moves)`, [
-        { text: 'OK', onPress: onClose },
-      ]);
-    } catch (error) {
-      console.error('Error submitting score:', error);
     }
   };
 
@@ -382,7 +367,7 @@ function MemoryCardsGame({ onClose, groupId, userId }) {
 }
 
 // ────────────────────────────────────────────────────────────────────────────
-// QUICK MATH DUEL (Multiplayer - turn-based)
+// QUICK MATH DUEL
 // ────────────────────────────────────────────────────────────────────────────
 function QuickMathDuel({ onClose, groupId, userId }) {
   const [problem, setProblem] = useState(null);
@@ -410,7 +395,7 @@ function QuickMathDuel({ onClose, groupId, userId }) {
     const b = Math.floor(Math.random() * 20) + 1;
     const operations = ['+', '-', '*'];
     const op = operations[Math.floor(Math.random() * operations.length)];
-    
+
     let correctAnswer;
     switch (op) {
       case '+': correctAnswer = a + b; break;
@@ -426,7 +411,7 @@ function QuickMathDuel({ onClose, groupId, userId }) {
   const checkAnswer = () => {
     const correct = parseInt(answer) === problem.correctAnswer;
     if (correct) {
-      setScore((prev) => prev + (timeLeft * 10)); // Bonus for speed
+      setScore((prev) => prev + (timeLeft * 10));
     }
     nextRound(correct);
   };
@@ -440,21 +425,19 @@ function QuickMathDuel({ onClose, groupId, userId }) {
   };
 
   const finishGame = async () => {
-    try {
-      await supabase.from('game_scores').insert({
-        user_id: userId,
-        group_id: groupId,
-        game_type: 'quickmath',
-        score: score,
-        mode: 'solo',
-        played_at: new Date().toISOString(),
-      });
-      Alert.alert('Game Over!', `Final Score: ${score}`, [
-        { text: 'OK', onPress: onClose },
-      ]);
-    } catch (error) {
-      console.error('Error submitting score:', error);
+    const { error } = await supabase.from('game_scores').insert({
+      user_id: userId,
+      group_id: groupId,
+      game_type: 'quickmath',
+      score: score,
+      mode: 'solo',
+    });
+    if (error) {
+      console.error('Error submitting quickmath score:', error);
     }
+    Alert.alert('Game Over!', `Final Score: ${score}`, [
+      { text: 'OK', onPress: onClose },
+    ]);
   };
 
   if (!problem) return null;
@@ -489,16 +472,10 @@ function QuickMathDuel({ onClose, groupId, userId }) {
       <Text style={styles.answerDisplay}>{answer || '_'}</Text>
 
       <View style={styles.mathControls}>
-        <TouchableOpacity
-          style={styles.mathClear}
-          onPress={() => setAnswer('')}
-        >
+        <TouchableOpacity style={styles.mathClear} onPress={() => setAnswer('')}>
           <Text style={styles.mathClearText}>Clear</Text>
         </TouchableOpacity>
-        <TouchableOpacity
-          style={styles.mathSubmit}
-          onPress={checkAnswer}
-        >
+        <TouchableOpacity style={styles.mathSubmit} onPress={checkAnswer}>
           <Text style={styles.mathSubmitText}>Submit</Text>
         </TouchableOpacity>
       </View>
@@ -507,7 +484,7 @@ function QuickMathDuel({ onClose, groupId, userId }) {
 }
 
 // ────────────────────────────────────────────────────────────────────────────
-// SPEED CHALLENGE (Solo - tap as fast as possible)
+// SPEED CHALLENGE
 // ────────────────────────────────────────────────────────────────────────────
 function SpeedChallengeGame({ onClose, groupId, userId }) {
   const [taps, setTaps] = useState(0);
@@ -537,23 +514,21 @@ function SpeedChallengeGame({ onClose, groupId, userId }) {
 
   const finishGame = async () => {
     setGameActive(false);
-    const score = taps * 10; // 10 points per tap
-    
-    try {
-      await supabase.from('game_scores').insert({
-        user_id: userId,
-        group_id: groupId,
-        game_type: 'speedchallenge',
-        score: score,
-        mode: 'solo',
-        played_at: new Date().toISOString(),
-      });
-      Alert.alert('Time Up!', `${taps} taps! Score: ${score}`, [
-        { text: 'OK', onPress: onClose },
-      ]);
-    } catch (error) {
-      console.error('Error submitting score:', error);
+    const score = taps * 10;
+
+    const { error } = await supabase.from('game_scores').insert({
+      user_id: userId,
+      group_id: groupId,
+      game_type: 'speedchallenge',
+      score: score,
+      mode: 'solo',
+    });
+    if (error) {
+      console.error('Error submitting speedchallenge score:', error);
     }
+    Alert.alert('Time Up!', `${taps} taps! Score: ${score}`, [
+      { text: 'OK', onPress: onClose },
+    ]);
   };
 
   return (
@@ -602,44 +577,43 @@ export default function GroupChatScreen({ route, navigation }) {
   const [messages, setMessages] = useState([]);
   const [showGames, setShowGames] = useState(false);
   const [activeGame, setActiveGame] = useState(null);
-  const [gameMode, setGameMode] = useState(null); // 'solo' or 'multiplayer'
+  const [gameMode, setGameMode] = useState(null);
 
-  // Game list with solo/multiplayer support
   const games = [
-    { 
-      id: '1', 
-      name: 'Tic-Tac-Toe', 
-      icon: 'gamepad-variant', 
+    {
+      id: '1',
+      name: 'Tic-Tac-Toe',
+      icon: 'gamepad-variant',
       component: TicTacToeGame,
-      modes: ['solo', 'multiplayer']
+      modes: ['solo', 'multiplayer'],
     },
-    { 
-      id: '2', 
-      name: 'Rock Paper Scissors', 
-      icon: 'hand-back-right', 
+    {
+      id: '2',
+      name: 'Rock Paper Scissors',
+      icon: 'hand-back-right',
       component: RockPaperScissorsGame,
-      modes: ['solo']
+      modes: ['solo'],
     },
-    { 
-      id: '3', 
-      name: 'Memory Cards', 
-      icon: 'cards', 
+    {
+      id: '3',
+      name: 'Memory Cards',
+      icon: 'cards',
       component: MemoryCardsGame,
-      modes: ['solo']
+      modes: ['solo'],
     },
-    { 
-      id: '4', 
-      name: 'Quick Math Duel', 
-      icon: 'calculator', 
+    {
+      id: '4',
+      name: 'Quick Math Duel',
+      icon: 'calculator',
       component: QuickMathDuel,
-      modes: ['solo']
+      modes: ['solo'],
     },
-    { 
-      id: '5', 
-      name: 'Speed Challenge', 
-      icon: 'speedometer', 
+    {
+      id: '5',
+      name: 'Speed Challenge',
+      icon: 'speedometer',
       component: SpeedChallengeGame,
-      modes: ['solo']
+      modes: ['solo'],
     },
   ];
 
@@ -668,7 +642,6 @@ export default function GroupChatScreen({ route, navigation }) {
   useEffect(() => {
     load();
 
-    // Real-time chat updates
     const unsubscribe = subscribeToTable(
       'messages',
       `group_id=eq.${groupId}`,
@@ -716,7 +689,7 @@ export default function GroupChatScreen({ route, navigation }) {
       _id: `temp-${Date.now()}`,
       pending: true,
     };
-    
+
     setMessages((p) => [optimisticMessage, ...p]);
 
     const { data } = await supabase
@@ -742,14 +715,14 @@ export default function GroupChatScreen({ route, navigation }) {
     <Bubble
       {...props}
       wrapperStyle={{
-        right: { 
+        right: {
           backgroundColor: '#6366f1',
           marginVertical: 4,
           marginHorizontal: 8,
           borderRadius: 16,
           borderBottomRightRadius: 4,
         },
-        left: { 
+        left: {
           backgroundColor: '#f1f5f9',
           marginVertical: 4,
           marginHorizontal: 8,
@@ -792,8 +765,8 @@ export default function GroupChatScreen({ route, navigation }) {
         </TouchableOpacity>
 
         <View style={styles.composerContainer}>
-          <Composer 
-            {...props} 
+          <Composer
+            {...props}
             textInputStyle={styles.composer}
             placeholder="Type a message..."
             placeholderTextColor="#94a3b8"
@@ -815,21 +788,24 @@ export default function GroupChatScreen({ route, navigation }) {
       setActiveGame(() => game.component);
       setShowGames(false);
     } else {
-      // Show mode selector
       Alert.alert(
         'Select Mode',
         'Choose how you want to play',
         [
-          { text: 'Solo', onPress: () => {
-            setGameMode('solo');
-            setActiveGame(() => game.component);
-            setShowGames(false);
-          }},
-          { text: 'Multiplayer', onPress: () => {
-            setGameMode('multiplayer');
-            setActiveGame(() => game.component);
-            setShowGames(false);
-          }},
+          {
+            text: 'Solo', onPress: () => {
+              setGameMode('solo');
+              setActiveGame(() => game.component);
+              setShowGames(false);
+            },
+          },
+          {
+            text: 'Multiplayer', onPress: () => {
+              setGameMode('multiplayer');
+              setActiveGame(() => game.component);
+              setShowGames(false);
+            },
+          },
           { text: 'Cancel', style: 'cancel' },
         ]
       );
@@ -852,7 +828,6 @@ export default function GroupChatScreen({ route, navigation }) {
         showAvatarForEveryMessage
       />
 
-      {/* Game Selection Modal */}
       <Modal visible={showGames} transparent animationType="fade">
         <TouchableOpacity
           style={styles.overlay}
@@ -877,9 +852,7 @@ export default function GroupChatScreen({ route, navigation }) {
                 </View>
                 <View style={{ flex: 1 }}>
                   <Text style={styles.gameText}>{g.name}</Text>
-                  <Text style={styles.gameMode}>
-                    {g.modes.join(' / ')}
-                  </Text>
+                  <Text style={styles.gameMode}>{g.modes.join(' / ')}</Text>
                 </View>
                 <MaterialCommunityIcons name="chevron-right" size={20} color="#cbd5e1" />
               </TouchableOpacity>
@@ -888,7 +861,6 @@ export default function GroupChatScreen({ route, navigation }) {
         </TouchableOpacity>
       </Modal>
 
-      {/* Active Game Modal */}
       {activeGame && (
         <Modal visible transparent animationType="slide">
           <View style={styles.overlay}>
@@ -1014,8 +986,6 @@ const styles = StyleSheet.create({
   },
   gameText: { fontSize: 16, fontWeight: '500', color: '#1e293b' },
   gameMode: { fontSize: 12, color: '#64748b', marginTop: 2 },
-  
-  // Game Modal Styles
   gameModal: {
     backgroundColor: '#fff',
     padding: 24,
@@ -1028,8 +998,6 @@ const styles = StyleSheet.create({
   gameTitle: { fontSize: 20, fontWeight: '700', marginBottom: 16, color: '#1e293b' },
   gameTurn: { fontSize: 16, color: '#6366f1', marginBottom: 16, fontWeight: '600' },
   gameResult: { fontSize: 18, color: '#22c55e', marginBottom: 16, fontWeight: '700' },
-  
-  // Tic-Tac-Toe
   tttBoard: { width: 240, flexDirection: 'row', flexWrap: 'wrap', marginBottom: 20 },
   tttCell: {
     width: 80,
@@ -1040,8 +1008,6 @@ const styles = StyleSheet.create({
     alignItems: 'center',
   },
   tttCellText: { fontSize: 42, fontWeight: '700', color: '#1e293b' },
-  
-  // Rock-Paper-Scissors
   scoreDisplay: { fontSize: 18, fontWeight: '700', color: '#6366f1', marginBottom: 8 },
   roundsDisplay: { fontSize: 14, color: '#64748b', marginBottom: 16 },
   rpsResultContainer: {
@@ -1075,8 +1041,6 @@ const styles = StyleSheet.create({
     marginTop: 8,
   },
   endGameText: { color: '#fff', fontWeight: '600', fontSize: 15 },
-  
-  // Memory Cards
   movesDisplay: { fontSize: 14, color: '#64748b', marginBottom: 16 },
   memoryGrid: {
     flexDirection: 'row',
@@ -1095,8 +1059,6 @@ const styles = StyleSheet.create({
   },
   memoryCardFlipped: { backgroundColor: '#eef2ff' },
   memoryCardText: { fontSize: 28 },
-  
-  // Quick Math
   roundDisplay: { fontSize: 14, color: '#64748b', marginBottom: 8 },
   timerDisplay: { fontSize: 16, fontWeight: '700', color: '#22c55e', marginBottom: 16 },
   timerWarning: { color: '#ef4444' },
@@ -1147,8 +1109,6 @@ const styles = StyleSheet.create({
     borderRadius: 12,
   },
   mathSubmitText: { color: '#fff', fontWeight: '600', fontSize: 15 },
-  
-  // Speed Challenge
   speedInstructions: {
     fontSize: 16,
     color: '#64748b',
@@ -1174,7 +1134,6 @@ const styles = StyleSheet.create({
     alignItems: 'center',
   },
   speedTapText: { fontSize: 32, fontWeight: '700', color: '#fff' },
-  
   closeBtn: {
     backgroundColor: '#6366f1',
     paddingHorizontal: 32,

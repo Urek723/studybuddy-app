@@ -24,34 +24,7 @@ export default function LoginScreen({ navigation }) {
   
   const { signInWithEmail, signInWithGoogle } = useAuth();
 
-  const ensureProfileExists = async (userId, userEmail) => {
-    try {
-      // Check if profile exists
-      const { data: existingProfile, error: checkError } = await supabase
-        .from('profiles')
-        .select('id')
-        .eq('id', userId)
-        .maybeSingle();
-
-      if (!existingProfile) {
-        // Profile doesn't exist, create it
-        const { error: insertError } = await supabase
-          .from('profiles')
-          .insert({
-            id: userId,
-            email: userEmail,
-            full_name: userEmail.split('@')[0], // Use email prefix as temporary name
-            profile_completed: false,
-          });
-
-        if (insertError) {
-          console.error('Error creating profile:', insertError);
-        }
-      }
-    } catch (error) {
-      console.error('Error ensuring profile exists:', error);
-    }
-  };
+  
 
   const handleEmailLogin = async () => {
     if (!email || !password) {
@@ -68,10 +41,7 @@ export default function LoginScreen({ navigation }) {
       return;
     }
 
-    // Ensure profile exists after successful login
-    if (data?.user) {
-      await ensureProfileExists(data.user.id, data.user.email);
-    }
+ 
 
     setLoading(false);
   };

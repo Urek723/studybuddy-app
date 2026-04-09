@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useCallback } from 'react';
 import { View, ActivityIndicator, Text } from 'react-native';
 import { NavigationContainer } from '@react-navigation/native';
 import { createNativeStackNavigator } from '@react-navigation/native-stack';
@@ -118,19 +118,22 @@ function AuthStack() {
   );
 }
 
-function SetupStack() {
+function SetupStack({ onProfileComplete }) {
   return (
     <Stack.Navigator>
       <Stack.Screen
         name="ProfileSetup"
-        component={ProfileSetupScreen}
         options={{
           title: 'Complete Your Profile',
           headerStyle: { backgroundColor: theme.colors.primary },
           headerTintColor: '#fff',
-          headerLeft: () => null, // Prevent back navigation
+          headerLeft: () => null,
         }}
-      />
+      >
+        {(props) => (
+          <ProfileSetupScreen {...props} onProfileComplete={onProfileComplete} />
+        )}
+      </Stack.Screen>
     </Stack.Navigator>
   );
 }
@@ -246,6 +249,24 @@ function Navigation() {
   const [profileCompleted, setProfileCompleted] = useState(null);
   const [checkingProfile, setCheckingProfile] = useState(true);
 
+  const checkProfileCompletion = useCallback(async () => {
+    if (!user) return;
+    try {
+      const { data, error } = await supabase
+        .from('profiles')
+        .select('profile_completed')
+        .eq('id', user.id)
+        .single();
+      if (error) throw error;
+      setProfileCompleted(data?.profile_completed ?? false);
+    } catch (error) {
+      console.error('Error checking profile completion:', error);
+      setProfileCompleted(false);
+    } finally {
+      setCheckingProfile(false);
+    }
+  }, [user]);
+
   useEffect(() => {
     if (user) {
       checkProfileCompletion();
@@ -253,16 +274,15 @@ function Navigation() {
       setCheckingProfile(false);
       setProfileCompleted(null);
     }
-  }, [user]);
+  }, [user, checkProfileCompletion]);
 
-  // Add realtime listener for profile updates
   useEffect(() => {
     if (!user) return;
 
     console.log('Setting up realtime listener for user:', user.id);
 
     const channel = supabase
-      .channel('profile-changes')
+      .channel(`profile-changes-${user.id}`)
       .on(
         'postgres_changes',
         {
@@ -273,7 +293,6 @@ function Navigation() {
         },
         (payload) => {
           console.log('Profile updated via realtime:', payload);
-          // Re-check profile completion when profile is updated
           checkProfileCompletion();
         }
       )
@@ -283,27 +302,7 @@ function Navigation() {
       console.log('Cleaning up realtime listener');
       supabase.removeChannel(channel);
     };
-  }, [user]);
-
-  const checkProfileCompletion = async () => {
-    try {
-      const { data, error } = await supabase
-        .from('profiles')
-        .select('profile_completed')
-        .eq('id', user.id)
-        .single();
-
-      if (error) throw error;
-
-      console.log('Profile completion status:', data?.profile_completed);
-      setProfileCompleted(data?.profile_completed ?? false);
-    } catch (error) {
-      console.error('Error checking profile completion:', error);
-      setProfileCompleted(false);
-    } finally {
-      setCheckingProfile(false);
-    }
-  };
+  }, [user, checkProfileCompletion]);
 
   if (loading || checkingProfile) {
     return (
@@ -326,7 +325,7 @@ function Navigation() {
       {!user ? (
         <AuthStack />
       ) : profileCompleted === false ? (
-        <SetupStack />
+        <SetupStack onProfileComplete={() => setProfileCompleted(true)} />
       ) : (
         <MainStack />
       )}
