@@ -11,28 +11,29 @@ export const NotificationProvider = ({ children }) => {
   useEffect(() => {
     if (!user) return;
 
-    // initial load
     fetchNotifications();
 
-    // realtime listener
+    // Use user-scoped channel name to prevent cross-user collisions
+    const channelName = `notifications-user-${user.id}`;
     const channel = supabase
-      .channel('notifications')
+      .channel(channelName)
       .on(
         'postgres_changes',
         {
           event: 'INSERT',
           schema: 'public',
           table: 'notifications',
-          filter: `user_id=eq.${user.id}`
+          filter: `user_id=eq.${user.id}`,
         },
         (payload) => {
-          setNotifications(prev => [payload.new, ...prev]);
+          setNotifications((prev) => [payload.new, ...prev]);
         }
       )
       .subscribe();
 
-    return () => supabase.removeChannel(channel);
-
+    return () => {
+      supabase.removeChannel(channel);
+    };
   }, [user]);
 
   const fetchNotifications = async () => {

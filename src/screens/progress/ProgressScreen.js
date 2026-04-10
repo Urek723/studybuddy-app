@@ -6,6 +6,7 @@ import {
   StyleSheet,
   Dimensions,
   TouchableOpacity,
+  Alert,
 } from 'react-native';
 import { LinearGradient } from 'expo-linear-gradient';
 import { LineChart, BarChart } from 'react-native-chart-kit';
@@ -64,22 +65,25 @@ export default function ProgressScreen({ navigation }) {
   }, [refreshKey]);
 
   const calculateStats = (progressData, quizData, achievementsData) => {
-    const totalHours =
-      (progressData || []).reduce((sum, p) => sum + parseFloat(p.study_hours || 0), 0);
-
+    const totalHours = (progressData || []).reduce(
+      (sum, p) => sum + parseFloat(p.study_hours || 0),
+      0
+    );
     const last7Days = (progressData || []).slice(0, 7).reverse();
-    const weeklyHours = last7Days.map(p => parseFloat(p.study_hours || 0));
+    const weeklyHours = last7Days.map((p) => parseFloat(p.study_hours || 0));
     const quizzesCompleted = (quizData || []).length;
     const averageScore = quizData?.length
       ? Math.round(
-          quizData.reduce((sum, q) => sum + ((q.score || 0) / (q.total_points || 1)) * 100, 0) /
-            quizData.length
+          quizData.reduce(
+            (sum, q) => sum + ((q.score || 0) / (q.total_points || 1)) * 100,
+            0
+          ) / quizData.length
         )
       : 0;
     const recentScores = (quizData || [])
       .slice(0, 5)
       .reverse()
-      .map(q => Math.round(((q.score || 0) / (q.total_points || 1)) * 100));
+      .map((q) => Math.round(((q.score || 0) / (q.total_points || 1)) * 100));
 
     return {
       totalHours: Math.round(totalHours * 10) / 10,
@@ -118,9 +122,10 @@ export default function ProgressScreen({ navigation }) {
       const calculatedStats = calculateStats(progressData, quizData, achievementsData);
       setStats(calculatedStats);
 
+      // Fixed: use Alert.alert instead of global alert()
       if (newAchievements.length > 0) {
-        newAchievements.forEach(a => {
-          alert(`🎉 Achievement Unlocked: ${a.name}`);
+        newAchievements.forEach((a) => {
+          Alert.alert('🎉 Achievement Unlocked!', a.name);
         });
       }
     } catch (error) {
@@ -228,7 +233,7 @@ export default function ProgressScreen({ navigation }) {
       <View style={styles.section}>
         <Text style={styles.sectionTitle}>Achievements ({stats.achievements.length})</Text>
         {stats.achievements.length > 0
-          ? stats.achievements.map(a => <AchievementCard key={a.id} achievement={a} />)
+          ? stats.achievements.map((a) => <AchievementCard key={a.id} achievement={a} />)
           : <EmptyAchievements />}
       </View>
 
@@ -291,8 +296,22 @@ const styles = StyleSheet.create({
   headerTitle: { fontSize: 28, fontWeight: 'bold', color: '#fff', marginTop: 12 },
   headerSubtitle: { fontSize: 14, color: '#e0e7ff', marginTop: 4 },
   statsContainer: { flexDirection: 'row', paddingHorizontal: 16, marginBottom: 24, gap: 12 },
-  statCard: { flex: 1, backgroundColor: '#fff', borderRadius: 16, padding: 16, alignItems: 'center', elevation: 2 },
-  statIcon: { width: 56, height: 56, borderRadius: 28, justifyContent: 'center', alignItems: 'center', marginBottom: 12 },
+  statCard: {
+    flex: 1,
+    backgroundColor: '#fff',
+    borderRadius: 16,
+    padding: 16,
+    alignItems: 'center',
+    elevation: 2,
+  },
+  statIcon: {
+    width: 56,
+    height: 56,
+    borderRadius: 28,
+    justifyContent: 'center',
+    alignItems: 'center',
+    marginBottom: 12,
+  },
   statValue: { fontSize: 24, fontWeight: 'bold', color: '#1e293b', marginBottom: 4 },
   statLabel: { fontSize: 12, color: '#64748b', textAlign: 'center' },
   chartContainer: { paddingHorizontal: 16, marginBottom: 24 },
@@ -300,8 +319,23 @@ const styles = StyleSheet.create({
   chart: { borderRadius: 16 },
   section: { padding: 16 },
   sectionTitle: { fontSize: 20, fontWeight: 'bold', color: '#1e293b', marginBottom: 16 },
-  achievementCard: { flexDirection: 'row', backgroundColor: '#fff', borderRadius: 12, padding: 16, marginBottom: 12, elevation: 1 },
-  achievementIcon: { width: 56, height: 56, borderRadius: 28, backgroundColor: '#fef3c7', justifyContent: 'center', alignItems: 'center', marginRight: 12 },
+  achievementCard: {
+    flexDirection: 'row',
+    backgroundColor: '#fff',
+    borderRadius: 12,
+    padding: 16,
+    marginBottom: 12,
+    elevation: 1,
+  },
+  achievementIcon: {
+    width: 56,
+    height: 56,
+    borderRadius: 28,
+    backgroundColor: '#fef3c7',
+    justifyContent: 'center',
+    alignItems: 'center',
+    marginRight: 12,
+  },
   achievementInfo: { flex: 1 },
   achievementName: { fontSize: 16, fontWeight: 'bold', color: '#1e293b', marginBottom: 4 },
   achievementDescription: { fontSize: 14, color: '#64748b', marginBottom: 4 },
@@ -309,6 +343,14 @@ const styles = StyleSheet.create({
   emptyState: { alignItems: 'center', paddingVertical: 48 },
   emptyStateText: { fontSize: 16, fontWeight: '600', color: '#64748b', marginTop: 12 },
   emptyStateSubtext: { fontSize: 14, color: '#94a3b8', marginTop: 4 },
-  motivationCard: { flexDirection: 'row', backgroundColor: '#fffbeb', borderRadius: 12, padding: 16, margin: 16, marginTop: 8, alignItems: 'center' },
+  motivationCard: {
+    flexDirection: 'row',
+    backgroundColor: '#fffbeb',
+    borderRadius: 12,
+    padding: 16,
+    margin: 16,
+    marginTop: 8,
+    alignItems: 'center',
+  },
   motivationText: { flex: 1, fontSize: 14, color: '#92400e', marginLeft: 12, lineHeight: 20 },
 });

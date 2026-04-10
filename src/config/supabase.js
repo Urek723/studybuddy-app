@@ -1,19 +1,22 @@
 import 'react-native-url-polyfill/auto';
 import { createClient } from '@supabase/supabase-js';
 import * as SecureStore from 'expo-secure-store';
+import Constants from 'expo-constants';
 
-// IMPORTANT: Replace these with your Supabase project credentials
-// Get them from https://app.supabase.com/project/_/settings/api
-const SUPABASE_URL = 'https://zlrurnxpntyrpasyflkt.supabase.co';
-const SUPABASE_ANON_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InpscnVybnhwbnR5cnBhc3lmbGt0Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzAzMjUzMzEsImV4cCI6MjA4NTkwMTMzMX0.2MAJ4I8VaVwCKcw5YMFlgKXojjFzyqVDr8kvUipnJR4';
+const SUPABASE_URL = Constants.expoConfig?.extra?.supabaseUrl;
+const SUPABASE_ANON_KEY = Constants.expoConfig?.extra?.supabaseAnonKey;
 
-// Custom storage implementation using SecureStore for better security
+if (!SUPABASE_URL || !SUPABASE_ANON_KEY) {
+  throw new Error(
+    'Missing Supabase config. Set supabaseUrl and supabaseAnonKey in app.json > extra.'
+  );
+}
+
 const ExpoSecureStoreAdapter = {
   getItem: async (key) => {
     try {
       return await SecureStore.getItemAsync(key);
-    } catch (error) {
-      console.error('Error getting item:', error);
+    } catch {
       return null;
     }
   },
@@ -21,14 +24,14 @@ const ExpoSecureStoreAdapter = {
     try {
       await SecureStore.setItemAsync(key, value);
     } catch (error) {
-      console.error('Error setting item:', error);
+      console.error('SecureStore setItem error:', error);
     }
   },
   removeItem: async (key) => {
     try {
       await SecureStore.deleteItemAsync(key);
     } catch (error) {
-      console.error('Error removing item:', error);
+      console.error('SecureStore removeItem error:', error);
     }
   },
 };

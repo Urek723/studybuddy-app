@@ -32,6 +32,7 @@ import EditProfileScreen from './src/screens/profile/EditProfileScreen';
 import LogStudyHoursScreen from './src/screens/progress/LogStudyHoursScreen';
 import LeaderboardScreen from './src/screens/gamification/LeaderboardScreen';
 import NotificationsScreen from './src/screens/notifications/NotificationsScreen';
+import PrivacyPolicyScreen from './src/screens/legal/PrivacyPolicyScreen';
 
 const Stack = createNativeStackNavigator();
 const Tab = createBottomTabNavigator();
@@ -86,19 +87,11 @@ function TabNavigator() {
           paddingBottom: 5,
           height: 60,
         },
-        headerStyle: {
-          backgroundColor: theme.colors.primary,
-        },
+        headerStyle: { backgroundColor: theme.colors.primary },
         headerTintColor: '#fff',
-        headerTitleStyle: {
-          fontWeight: 'bold',
-        },
+        headerTitleStyle: { fontWeight: 'bold' },
       })}
-      screenListeners={{
-        tabPress: () => {
-          triggerRefresh();
-        },
-      }}
+      screenListeners={{ tabPress: () => { triggerRefresh(); } }}
     >
       <Tab.Screen name="Home" component={HomeScreen} />
       <Tab.Screen name="Groups" component={GroupsScreen} />
@@ -114,6 +107,16 @@ function AuthStack() {
     <Stack.Navigator screenOptions={{ headerShown: false }}>
       <Stack.Screen name="Login" component={LoginScreen} />
       <Stack.Screen name="Register" component={RegisterScreen} />
+      <Stack.Screen
+        name="PrivacyPolicy"
+        component={PrivacyPolicyScreen}
+        options={{
+          headerShown: true,
+          title: 'Privacy Policy',
+          headerStyle: { backgroundColor: theme.colors.primary },
+          headerTintColor: '#fff',
+        }}
+      />
     </Stack.Navigator>
   );
 }
@@ -240,6 +243,15 @@ function MainStack() {
         component={LeaderboardScreen}
         options={{ title: 'Leaderboard' }}
       />
+      <Stack.Screen
+        name="PrivacyPolicy"
+        component={PrivacyPolicyScreen}
+        options={{
+          title: 'Privacy Policy',
+          headerStyle: { backgroundColor: theme.colors.primary },
+          headerTintColor: '#fff',
+        }}
+      />
     </Stack.Navigator>
   );
 }
@@ -279,8 +291,6 @@ function Navigation() {
   useEffect(() => {
     if (!user) return;
 
-    console.log('Setting up realtime listener for user:', user.id);
-
     const channel = supabase
       .channel(`profile-changes-${user.id}`)
       .on(
@@ -291,15 +301,13 @@ function Navigation() {
           table: 'profiles',
           filter: `id=eq.${user.id}`,
         },
-        (payload) => {
-          console.log('Profile updated via realtime:', payload);
+        () => {
           checkProfileCompletion();
         }
       )
       .subscribe();
 
     return () => {
-      console.log('Cleaning up realtime listener');
       supabase.removeChannel(channel);
     };
   }, [user, checkProfileCompletion]);

@@ -7,6 +7,7 @@ import {
   TouchableOpacity,
   RefreshControl,
   Image,
+  Alert,
 } from 'react-native';
 import { LinearGradient } from 'expo-linear-gradient';
 import { MaterialCommunityIcons } from '@expo/vector-icons';
@@ -36,11 +37,9 @@ export default function HomeScreen({ navigation }) {
     const unsubGroups = subscribeToTable('group_members', `user_id=eq.${user.id}`, () => {
       fetchUserData();
     });
-
     const unsubSessions = subscribeToTable('study_sessions', null, () => {
       fetchUserData();
     });
-
     const unsubProgress = subscribeToTable('study_progress', `user_id=eq.${user.id}`, () => {
       fetchUserData();
     });
@@ -61,7 +60,7 @@ export default function HomeScreen({ navigation }) {
         .select('*')
         .eq('id', user.id)
         .maybeSingle();
-      
+
       setProfile(profileData);
 
       const { data: groupsData } = await supabase
@@ -77,9 +76,11 @@ export default function HomeScreen({ navigation }) {
           )
         `)
         .eq('user_id', user.id)
+        .eq('status', 'accepted')
         .limit(3);
 
-      setGroups(groupsData?.map(gm => gm.study_groups) || []);
+      const myGroups = groupsData?.map((gm) => gm.study_groups).filter(Boolean) || [];
+      setGroups(myGroups);
 
       const { data: userSubjects } = await supabase
         .from('user_subjects')
@@ -87,32 +88,23 @@ export default function HomeScreen({ navigation }) {
         .eq('user_id', user.id);
 
       if (userSubjects?.length > 0) {
-        const subjectIds = userSubjects.map(us => us.subject_id);
-        
+        const subjectIds = userSubjects.map((us) => us.subject_id);
+        const myGroupIds = myGroups.map((g) => g.id);
+
         const { data: suggested } = await supabase
           .from('study_groups')
-          .select(`
-            *,
-            subjects (name),
-            group_members (count)
-          `)
+          .select('*, subjects (name)')
           .in('subject_id', subjectIds)
+          .not('id', 'in', myGroupIds.length > 0 ? `(${myGroupIds.join(',')})` : '(null)')
           .limit(3);
 
-        const filteredSuggested = suggested?.filter(
-          sg => !groups.find(g => g.id === sg.id)
-        ) || [];
-        
-        setSuggestedGroups(filteredSuggested);
+        setSuggestedGroups(suggested || []);
       }
 
       const now = new Date().toISOString();
       const { data: sessions } = await supabase
         .from('study_sessions')
-        .select(`
-          *,
-          study_groups (name)
-        `)
+        .select('*, study_groups (name)')
         .gte('start_time', now)
         .order('start_time', { ascending: true })
         .limit(3);
@@ -124,7 +116,8 @@ export default function HomeScreen({ navigation }) {
         .select('study_hours')
         .eq('user_id', user.id);
 
-      const totalHours = progressData?.reduce((sum, p) => sum + parseFloat(p.study_hours), 0) || 0;
+      const totalHours =
+        progressData?.reduce((sum, p) => sum + parseFloat(p.study_hours), 0) || 0;
 
       const { data: quizData } = await supabase
         .from('quiz_attempts')
@@ -142,7 +135,6 @@ export default function HomeScreen({ navigation }) {
         quizzesCompleted: quizData?.length || 0,
         achievements: achievementsData?.length || 0,
       });
-
     } catch (error) {
       console.error('Error fetching user data:', error);
     }
@@ -154,47 +146,59 @@ export default function HomeScreen({ navigation }) {
     setRefreshing(false);
   };
 
+  // Fixed: joinGroup now uses 'pending' status to respect approval flow
   const joinGroup = async (groupId) => {
     try {
-      const { error } = await supabase
+      const { data: existing } = await supabase
         .from('group_members')
-        .insert({
-          group_id: groupId,
-          user_id: user.id,
-          role: 'member',
-        });
+        .select('id, status')
+        .eq('group_id', groupId)
+        .eq('user_id', user.id)
+        .maybeSingle();
+
+      if (existing) {
+        if (existing.status === 'pending') {
+          Alert.alert('Info', 'Your join request is pending approval.');
+        } else if (existing.status === 'accepted') {
+          Alert.alert('Info', 'You are already a member of this group.');
+        }
+        return;
+      }
+
+      const { error } = await supabase.from('group_members').insert({
+        group_id: groupId,
+        user_id: user.id,
+        role: 'member',
+        status: 'pending',
+      });
 
       if (error) throw error;
-      
+      Alert.alert('Request Sent', 'Your request to join has been sent.');
     } catch (error) {
       console.error('Error joining group:', error);
+      Alert.alert('Error', 'Failed to send join request.');
     }
   };
 
-  const formatDate = (dateString) => {
-    const date = new Date(dateString);
-    return date.toLocaleDateString('en-US', { 
-      month: 'short', 
+  const formatDate = (dateString) =>
+    new Date(dateString).toLocaleDateString('en-US', {
+      month: 'short',
       day: 'numeric',
       hour: '2-digit',
-      minute: '2-digit'
+      minute: '2-digit',
     });
-  };
 
   return (
     <ScrollView
       style={styles.container}
-      refreshControl={
-        <RefreshControl refreshing={refreshing} onRefresh={onRefresh} />
-      }
+      refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} />}
     >
-      <LinearGradient
-        colors={['#6366f1', '#8b5cf6']}
-        style={styles.headerCard}
-      >
+      <LinearGradient colors={['#6366f1', '#8b5cf6']} style={styles.headerCard}>
         <View style={styles.headerContent}>
           <View style={styles.greetingContainer}>
-            <Text style={styles.greeting}>Hello, {profile?.full_name || 'Student'}!</Text>
+            <Text style={styles.greeting}>
+              Hello, {profile?.full_name || 'Student'}!
+            </Text>
             <Text style={styles.headerSubtext}>Ready to study today?</Text>
           </View>
 
@@ -203,9 +207,9 @@ export default function HomeScreen({ navigation }) {
             style={styles.avatarContainer}
           >
             {profile?.avatar_url ? (
-              <Image 
-                source={{ uri: profile.avatar_url }} 
-                style={styles.avatar} 
+              <Image
+                source={{ uri: profile.avatar_url }}
+                style={styles.avatar}
                 resizeMode="cover"
               />
             ) : (
@@ -214,8 +218,6 @@ export default function HomeScreen({ navigation }) {
               </View>
             )}
           </TouchableOpacity>
-          
-          
         </View>
 
         <View style={styles.statsContainer}>
@@ -331,10 +333,7 @@ export default function HomeScreen({ navigation }) {
                 <Text style={styles.groupName}>{group.name}</Text>
                 <Text style={styles.groupSubject}>{group.subjects?.name || 'General'}</Text>
               </View>
-              <TouchableOpacity
-                style={styles.joinButton}
-                onPress={() => joinGroup(group.id)}
-              >
+              <TouchableOpacity style={styles.joinButton} onPress={() => joinGroup(group.id)}>
                 <Text style={styles.joinButtonText}>Join</Text>
               </TouchableOpacity>
             </View>
@@ -364,37 +363,23 @@ export default function HomeScreen({ navigation }) {
 }
 
 const styles = StyleSheet.create({
-  container: {
-    flex: 1,
-    backgroundColor: '#f8fafc',
-  },
+  container: { flex: 1, backgroundColor: '#f8fafc' },
   headerCard: {
     padding: 24,
-    paddingTop: 60,          
-    paddingRight: 24,         
+    paddingTop: 60,
+    paddingRight: 24,
     borderBottomLeftRadius: 24,
     borderBottomRightRadius: 24,
   },
   headerContent: {
     flexDirection: 'row',
-    alignItems: 'center',     
+    alignItems: 'center',
     justifyContent: 'space-between',
-    marginBottom: 32,         
+    marginBottom: 32,
   },
-  greetingContainer: {
-    flexShrink: 1,            
-    maxWidth: '70%',          
-  },
-  greeting: {
-    fontSize: 28,
-    fontWeight: 'bold',
-    color: '#fff',
-  },
-  headerSubtext: {
-    fontSize: 14,
-    color: '#e0e7ff',
-    marginTop: 4,
-  },
+  greetingContainer: { flexShrink: 1, maxWidth: '70%' },
+  greeting: { fontSize: 28, fontWeight: 'bold', color: '#fff' },
+  headerSubtext: { fontSize: 14, color: '#e0e7ff', marginTop: 4 },
   avatarContainer: {
     width: 64,
     height: 64,
@@ -402,20 +387,16 @@ const styles = StyleSheet.create({
     backgroundColor: '#fff',
     justifyContent: 'center',
     alignItems: 'center',
-    marginLeft: 16,           
+    marginLeft: 16,
     elevation: 6,
     shadowColor: '#000',
     shadowOffset: { width: 0, height: 3 },
     shadowOpacity: 0.25,
     shadowRadius: 5,
     borderWidth: 2,
-    borderColor: '#ffffff80', 
+    borderColor: '#ffffff80',
   },
-  avatar: {
-    width: 60,
-    height: 60,
-    borderRadius: 30,
-  },
+  avatar: { width: 60, height: 60, borderRadius: 30 },
   avatarPlaceholder: {
     width: 60,
     height: 60,
@@ -430,49 +411,20 @@ const styles = StyleSheet.create({
     borderRadius: 16,
     padding: 16,
   },
-  statItem: {
-    flex: 1,
-    alignItems: 'center',
-  },
-  statDivider: {
-    width: 1,
-    backgroundColor: 'rgba(255, 255, 255, 0.3)',
-  },
-  statValue: {
-    fontSize: 20,
-    fontWeight: 'bold',
-    color: '#fff',
-    marginTop: 8,
-  },
-  statLabel: {
-    fontSize: 12,
-    color: '#e0e7ff',
-    marginTop: 4,
-  },
-  section: {
-    padding: 16,
-  },
+  statItem: { flex: 1, alignItems: 'center' },
+  statDivider: { width: 1, backgroundColor: 'rgba(255, 255, 255, 0.3)' },
+  statValue: { fontSize: 20, fontWeight: 'bold', color: '#fff', marginTop: 8 },
+  statLabel: { fontSize: 12, color: '#e0e7ff', marginTop: 4 },
+  section: { padding: 16 },
   sectionHeader: {
     flexDirection: 'row',
     justifyContent: 'space-between',
     alignItems: 'center',
     marginBottom: 16,
   },
-  sectionTitle: {
-    fontSize: 20,
-    fontWeight: 'bold',
-    color: '#1e293b',
-    marginBottom: 16,
-  },
-  seeAll: {
-    fontSize: 14,
-    color: '#6366f1',
-    fontWeight: '600',
-  },
-  quickActions: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-  },
+  sectionTitle: { fontSize: 20, fontWeight: 'bold', color: '#1e293b', marginBottom: 16 },
+  seeAll: { fontSize: 14, color: '#6366f1', fontWeight: '600' },
+  quickActions: { flexDirection: 'row', justifyContent: 'space-between' },
   actionCard: {
     flex: 1,
     alignItems: 'center',
@@ -494,12 +446,7 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     marginBottom: 8,
   },
-  actionText: {
-    fontSize: 12,
-    color: '#475569',
-    fontWeight: '600',
-    textAlign: 'center',
-  },
+  actionText: { fontSize: 12, color: '#475569', fontWeight: '600', textAlign: 'center' },
   groupCard: {
     flexDirection: 'row',
     alignItems: 'center',
@@ -522,24 +469,10 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     marginRight: 12,
   },
-  groupImage: {
-    width: 48,
-    height: 48,
-    borderRadius: 24,
-  },
-  groupInfo: {
-    flex: 1,
-  },
-  groupName: {
-    fontSize: 16,
-    fontWeight: '600',
-    color: '#1e293b',
-  },
-  groupSubject: {
-    fontSize: 14,
-    color: '#64748b',
-    marginTop: 2,
-  },
+  groupImage: { width: 48, height: 48, borderRadius: 24 },
+  groupInfo: { flex: 1 },
+  groupName: { fontSize: 16, fontWeight: '600', color: '#1e293b' },
+  groupSubject: { fontSize: 14, color: '#64748b', marginTop: 2 },
   suggestedCard: {
     flexDirection: 'row',
     alignItems: 'center',
@@ -556,11 +489,7 @@ const styles = StyleSheet.create({
     paddingVertical: 8,
     borderRadius: 8,
   },
-  joinButtonText: {
-    color: '#fff',
-    fontWeight: '600',
-    fontSize: 14,
-  },
+  joinButtonText: { color: '#fff', fontWeight: '600', fontSize: 14 },
   sessionCard: {
     flexDirection: 'row',
     backgroundColor: '#fff',
@@ -582,22 +511,8 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     marginRight: 12,
   },
-  sessionInfo: {
-    flex: 1,
-  },
-  sessionTitle: {
-    fontSize: 16,
-    fontWeight: '600',
-    color: '#1e293b',
-  },
-  sessionGroup: {
-    fontSize: 14,
-    color: '#6366f1',
-    marginTop: 2,
-  },
-  sessionTime: {
-    fontSize: 12,
-    color: '#64748b',
-    marginTop: 4,
-  },
+  sessionInfo: { flex: 1 },
+  sessionTitle: { fontSize: 16, fontWeight: '600', color: '#1e293b' },
+  sessionGroup: { fontSize: 14, color: '#6366f1', marginTop: 2 },
+  sessionTime: { fontSize: 12, color: '#64748b', marginTop: 4 },
 });

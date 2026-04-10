@@ -12,9 +12,7 @@
       "resizeMode": "contain",
       "backgroundColor": "#6366f1"
     },
-    "assetBundlePatterns": [
-      "**/*"
-    ],
+    "assetBundlePatterns": ["**/*"],
     "ios": {
       "supportsTablet": true,
       "bundleIdentifier": "com.studybuddy.app",
@@ -27,7 +25,6 @@
       }
     },
     "android": {
-      
       "adaptiveIcon": {
         "foregroundImage": "./assets/adaptive-icon.png",
         "backgroundColor": "#ffffff"
@@ -37,9 +34,6 @@
       "useNextNotificationsApi": true,
       "permissions": [
         "NOTIFICATIONS",
-        "CAMERA",
-        "READ_EXTERNAL_STORAGE",
-        "WRITE_EXTERNAL_STORAGE",
         "RECEIVE_BOOT_COMPLETED"
       ],
       "intentFilters": [
@@ -75,6 +69,8 @@
       ]
     ],
     "extra": {
+      "supabaseUrl": "https://zlrurnxpntyrpasyflkt.supabase.co",
+      "supabaseAnonKey": "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InpscnVybnhwbnR5cnBhc3lmbGt0Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzAzMjUzMzEsImV4cCI6MjA4NTkwMTMzMX0.2MAJ4I8VaVwCKcw5YMFlgKXojjFzyqVDr8kvUipnJR4",
       "eas": {
         "projectId": "afe34963-1d5d-4d98-b34f-455391db0baf"
       }
@@ -82,7 +78,7 @@
     "owner": "reylaurence",
     "androidNavigationBar": {
       "visible": "sticky-immersive",
-      "backgroundColor": "#ffffff"   
+      "backgroundColor": "#ffffff"
     }
   }
 }

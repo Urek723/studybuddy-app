@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import {
   View,
   Text,
@@ -22,31 +22,49 @@ export default function TakeQuizScreen({ route, navigation }) {
   const [timeLeft, setTimeLeft] = useState(null);
   const [loading, setLoading] = useState(true);
 
+  // Use ref to avoid stale closure in timer callback
+  const answersRef = useRef({});
+  const questionsRef = useRef([]);
+  const submitCalledRef = useRef(false);
+
   useEffect(() => {
     fetchQuiz();
   }, []);
 
   useEffect(() => {
+    answersRef.current = answers;
+  }, [answers]);
+
+  useEffect(() => {
+    questionsRef.current = questions;
+  }, [questions]);
+
+  useEffect(() => {
     if (quiz?.time_limit && timeLeft === null) {
-      setTimeLeft(quiz.time_limit * 60); // Convert to seconds
+      setTimeLeft(quiz.time_limit * 60);
     }
   }, [quiz]);
 
   useEffect(() => {
-    if (timeLeft !== null && timeLeft > 0) {
-      const timer = setInterval(() => {
-        setTimeLeft((prev) => {
-          if (prev <= 1) {
-            submitQuiz(true); // Auto-submit when time runs out
-            return 0;
-          }
-          return prev - 1;
-        });
-      }, 1000);
+    if (timeLeft === null || timeLeft <= 0) return;
 
-      return () => clearInterval(timer);
-    }
-  }, [timeLeft]);
+    const timer = setInterval(() => {
+      setTimeLeft((prev) => {
+        if (prev <= 1) {
+          clearInterval(timer);
+          // Call via ref to avoid stale closure
+          if (!submitCalledRef.current) {
+            submitCalledRef.current = true;
+            saveQuizAttempt(true);
+          }
+          return 0;
+        }
+        return prev - 1;
+      });
+    }, 1000);
+
+    return () => clearInterval(timer);
+  }, [timeLeft === null ? null : 'running']);
 
   const fetchQuiz = async () => {
     try {
@@ -65,6 +83,7 @@ export default function TakeQuizScreen({ route, navigation }) {
         .order('order_index', { ascending: true });
 
       setQuestions(questionsData || []);
+      questionsRef.current = questionsData || [];
       setLoading(false);
     } catch (error) {
       console.error('Error fetching quiz:', error);
@@ -74,50 +93,50 @@ export default function TakeQuizScreen({ route, navigation }) {
   };
 
   const selectAnswer = (questionId, answerIndex) => {
-    setAnswers({
-      ...answers,
-      [questionId]: answerIndex,
-    });
+    setAnswers((prev) => ({ ...prev, [questionId]: answerIndex }));
   };
 
-  const calculateScore = () => {
+  const calculateScore = (currentAnswers, currentQuestions) => {
     let score = 0;
     let totalPoints = 0;
-
-    questions.forEach((question) => {
+    currentQuestions.forEach((question) => {
       totalPoints += question.points || 10;
-      const userAnswer = answers[question.id];
-      if (userAnswer === question.correct_answer) {
+      if (currentAnswers[question.id] === question.correct_answer) {
         score += question.points || 10;
       }
     });
-
     return { score, totalPoints };
   };
 
-  const submitQuiz = async (autoSubmit = false) => {
-    const answeredCount = Object.keys(answers).length;
-    
-    if (!autoSubmit && answeredCount < questions.length) {
+  const submitQuiz = () => {
+    const answeredCount = Object.keys(answersRef.current).length;
+    if (answeredCount < questionsRef.current.length) {
       Alert.alert(
         'Incomplete Quiz',
-        `You have answered ${answeredCount} out of ${questions.length} questions. Submit anyway?`,
+        `You have answered ${answeredCount} out of ${questionsRef.current.length} questions. Submit anyway?`,
         [
           { text: 'Cancel', style: 'cancel' },
-          { text: 'Submit', onPress: () => saveQuizAttempt() },
+          {
+            text: 'Submit',
+            onPress: () => {
+              submitCalledRef.current = true;
+              saveQuizAttempt(false);
+            },
+          },
         ]
       );
       return;
     }
-
-    await saveQuizAttempt();
+    submitCalledRef.current = true;
+    saveQuizAttempt(false);
   };
 
-  const saveQuizAttempt = async () => {
+  const saveQuizAttempt = async (isAutoSubmit) => {
     try {
-      const { score, totalPoints } = calculateScore();
+      const currentAnswers = answersRef.current;
+      const currentQuestions = questionsRef.current;
+      const { score, totalPoints } = calculateScore(currentAnswers, currentQuestions);
 
-      // Create attempt
       const { data: attemptData, error: attemptError } = await supabase
         .from('quiz_attempts')
         .insert({
@@ -132,12 +151,11 @@ export default function TakeQuizScreen({ route, navigation }) {
 
       if (attemptError) throw attemptError;
 
-      // Save individual answers
-      const answerRecords = questions.map((question) => ({
+      const answerRecords = currentQuestions.map((question) => ({
         attempt_id: attemptData.id,
         question_id: question.id,
-        selected_answer: answers[question.id] ?? null,
-        is_correct: answers[question.id] === question.correct_answer,
+        selected_answer: currentAnswers[question.id] ?? null,
+        is_correct: currentAnswers[question.id] === question.correct_answer,
       }));
 
       const { error: answersError } = await supabase
@@ -146,18 +164,15 @@ export default function TakeQuizScreen({ route, navigation }) {
 
       if (answersError) throw answersError;
 
-      // Navigate to results
+      const percentage = Math.round((score / totalPoints) * 100);
       Alert.alert(
-        'Quiz Completed!',
-        `You scored ${score} out of ${totalPoints} points (${Math.round((score / totalPoints) * 100)}%)`,
+        isAutoSubmit ? 'Time Up!' : 'Quiz Completed!',
+        `You scored ${score} out of ${totalPoints} points (${percentage}%)`,
         [
           {
             text: 'View Results',
             onPress: () => {
-              navigation.replace('QuizDetail', {
-                quizId,
-                attemptId: attemptData.id,
-              });
+              navigation.replace('QuizDetail', { quizId, attemptId: attemptData.id });
             },
           },
         ]
@@ -187,7 +202,6 @@ export default function TakeQuizScreen({ route, navigation }) {
 
   return (
     <View style={styles.container}>
-      {/* Header */}
       <LinearGradient colors={['#6366f1', '#8b5cf6']} style={styles.header}>
         <View style={styles.headerContent}>
           <View>
@@ -197,55 +211,36 @@ export default function TakeQuizScreen({ route, navigation }) {
             {timeLeft !== null && (
               <View style={styles.timerContainer}>
                 <MaterialCommunityIcons name="clock-outline" size={16} color="#fff" />
-                <Text style={[
-                  styles.timerText,
-                  timeLeft < 60 && styles.timerWarning
-                ]}>
+                <Text style={[styles.timerText, timeLeft < 60 && styles.timerWarning]}>
                   {formatTime(timeLeft)}
                 </Text>
               </View>
             )}
           </View>
-          <Text style={styles.pointsText}>
-            {currentQuestion?.points || 10} pts
-          </Text>
+          <Text style={styles.pointsText}>{currentQuestion?.points || 10} pts</Text>
         </View>
-        
-        {/* Progress Bar */}
         <View style={styles.progressBar}>
           <View style={[styles.progressFill, { width: `${progress}%` }]} />
         </View>
       </LinearGradient>
 
-      {/* Question */}
       <ScrollView style={styles.content}>
         <View style={styles.questionContainer}>
           <Text style={styles.questionText}>{currentQuestion?.question}</Text>
         </View>
-
-        {/* Options */}
         <View style={styles.optionsContainer}>
           {currentQuestion?.options?.map((option, index) => {
             const isSelected = answers[currentQuestion.id] === index;
             return (
               <TouchableOpacity
                 key={index}
-                style={[
-                  styles.optionButton,
-                  isSelected && styles.optionSelected,
-                ]}
+                style={[styles.optionButton, isSelected && styles.optionSelected]}
                 onPress={() => selectAnswer(currentQuestion.id, index)}
               >
-                <View style={[
-                  styles.optionIndicator,
-                  isSelected && styles.indicatorSelected
-                ]}>
+                <View style={[styles.optionIndicator, isSelected && styles.indicatorSelected]}>
                   {isSelected && <View style={styles.indicatorDot} />}
                 </View>
-                <Text style={[
-                  styles.optionText,
-                  isSelected && styles.optionTextSelected
-                ]}>
+                <Text style={[styles.optionText, isSelected && styles.optionTextSelected]}>
                   {option}
                 </Text>
               </TouchableOpacity>
@@ -254,36 +249,30 @@ export default function TakeQuizScreen({ route, navigation }) {
         </View>
       </ScrollView>
 
-      {/* Navigation */}
       <View style={styles.footer}>
         <TouchableOpacity
-          style={[
-            styles.navButton,
-            currentQuestionIndex === 0 && styles.navButtonDisabled,
-          ]}
+          style={[styles.navButton, currentQuestionIndex === 0 && styles.navButtonDisabled]}
           onPress={() => setCurrentQuestionIndex(currentQuestionIndex - 1)}
           disabled={currentQuestionIndex === 0}
         >
-          <MaterialCommunityIcons name="chevron-left" size={24} color={
-            currentQuestionIndex === 0 ? '#cbd5e1' : '#6366f1'
-          } />
-          <Text style={[
-            styles.navButtonText,
-            currentQuestionIndex === 0 && styles.navButtonTextDisabled
-          ]}>
+          <MaterialCommunityIcons
+            name="chevron-left"
+            size={24}
+            color={currentQuestionIndex === 0 ? '#cbd5e1' : '#6366f1'}
+          />
+          <Text
+            style={[
+              styles.navButtonText,
+              currentQuestionIndex === 0 && styles.navButtonTextDisabled,
+            ]}
+          >
             Previous
           </Text>
         </TouchableOpacity>
 
         {currentQuestionIndex === questions.length - 1 ? (
-          <TouchableOpacity
-            style={styles.submitButton}
-            onPress={() => submitQuiz()}
-          >
-            <LinearGradient
-              colors={['#22c55e', '#16a34a']}
-              style={styles.submitButtonGradient}
-            >
+          <TouchableOpacity style={styles.submitButton} onPress={submitQuiz}>
+            <LinearGradient colors={['#22c55e', '#16a34a']} style={styles.submitButtonGradient}>
               <Text style={styles.submitButtonText}>Submit Quiz</Text>
             </LinearGradient>
           </TouchableOpacity>
@@ -302,62 +291,28 @@ export default function TakeQuizScreen({ route, navigation }) {
 }
 
 const styles = StyleSheet.create({
-  container: {
-    flex: 1,
-    backgroundColor: '#f8fafc',
-  },
-  loadingContainer: {
-    flex: 1,
-    justifyContent: 'center',
-    alignItems: 'center',
-  },
-  header: {
-    padding: 20,
-    paddingTop: 16,
-  },
+  container: { flex: 1, backgroundColor: '#f8fafc' },
+  loadingContainer: { flex: 1, justifyContent: 'center', alignItems: 'center' },
+  header: { padding: 20, paddingTop: 16 },
   headerContent: {
     flexDirection: 'row',
     justifyContent: 'space-between',
     alignItems: 'flex-start',
     marginBottom: 12,
   },
-  questionCounter: {
-    fontSize: 14,
-    color: '#e0e7ff',
-    marginBottom: 4,
-  },
-  timerContainer: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 4,
-  },
-  timerText: {
-    fontSize: 16,
-    fontWeight: 'bold',
-    color: '#fff',
-  },
-  timerWarning: {
-    color: '#fca5a5',
-  },
-  pointsText: {
-    fontSize: 14,
-    fontWeight: '600',
-    color: '#fff',
-  },
+  questionCounter: { fontSize: 14, color: '#e0e7ff', marginBottom: 4 },
+  timerContainer: { flexDirection: 'row', alignItems: 'center', gap: 4 },
+  timerText: { fontSize: 16, fontWeight: 'bold', color: '#fff' },
+  timerWarning: { color: '#fca5a5' },
+  pointsText: { fontSize: 14, fontWeight: '600', color: '#fff' },
   progressBar: {
     height: 4,
     backgroundColor: 'rgba(255, 255, 255, 0.2)',
     borderRadius: 2,
     overflow: 'hidden',
   },
-  progressFill: {
-    height: '100%',
-    backgroundColor: '#fff',
-  },
-  content: {
-    flex: 1,
-    padding: 20,
-  },
+  progressFill: { height: '100%', backgroundColor: '#fff' },
+  content: { flex: 1, padding: 20 },
   questionContainer: {
     backgroundColor: '#fff',
     borderRadius: 16,
@@ -369,15 +324,8 @@ const styles = StyleSheet.create({
     shadowOpacity: 0.1,
     shadowRadius: 4,
   },
-  questionText: {
-    fontSize: 18,
-    color: '#1e293b',
-    lineHeight: 28,
-    fontWeight: '500',
-  },
-  optionsContainer: {
-    gap: 12,
-  },
+  questionText: { fontSize: 18, color: '#1e293b', lineHeight: 28, fontWeight: '500' },
+  optionsContainer: { gap: 12 },
   optionButton: {
     flexDirection: 'row',
     alignItems: 'center',
@@ -387,10 +335,7 @@ const styles = StyleSheet.create({
     borderWidth: 2,
     borderColor: '#e2e8f0',
   },
-  optionSelected: {
-    borderColor: '#6366f1',
-    backgroundColor: '#eef2ff',
-  },
+  optionSelected: { borderColor: '#6366f1', backgroundColor: '#eef2ff' },
   optionIndicator: {
     width: 24,
     height: 24,
@@ -401,24 +346,10 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
     alignItems: 'center',
   },
-  indicatorSelected: {
-    borderColor: '#6366f1',
-  },
-  indicatorDot: {
-    width: 12,
-    height: 12,
-    borderRadius: 6,
-    backgroundColor: '#6366f1',
-  },
-  optionText: {
-    flex: 1,
-    fontSize: 16,
-    color: '#475569',
-  },
-  optionTextSelected: {
-    color: '#1e293b',
-    fontWeight: '500',
-  },
+  indicatorSelected: { borderColor: '#6366f1' },
+  indicatorDot: { width: 12, height: 12, borderRadius: 6, backgroundColor: '#6366f1' },
+  optionText: { flex: 1, fontSize: 16, color: '#475569' },
+  optionTextSelected: { color: '#1e293b', fontWeight: '500' },
   footer: {
     flexDirection: 'row',
     justifyContent: 'space-between',
@@ -434,28 +365,10 @@ const styles = StyleSheet.create({
     paddingHorizontal: 20,
     gap: 4,
   },
-  navButtonDisabled: {
-    opacity: 0.4,
-  },
-  navButtonText: {
-    fontSize: 16,
-    fontWeight: '600',
-    color: '#6366f1',
-  },
-  navButtonTextDisabled: {
-    color: '#cbd5e1',
-  },
-  submitButton: {
-    borderRadius: 12,
-    overflow: 'hidden',
-  },
-  submitButtonGradient: {
-    paddingVertical: 12,
-    paddingHorizontal: 32,
-  },
-  submitButtonText: {
-    fontSize: 16,
-    fontWeight: 'bold',
-    color: '#fff',
-  },
+  navButtonDisabled: { opacity: 0.4 },
+  navButtonText: { fontSize: 16, fontWeight: '600', color: '#6366f1' },
+  navButtonTextDisabled: { color: '#cbd5e1' },
+  submitButton: { borderRadius: 12, overflow: 'hidden' },
+  submitButtonGradient: { paddingVertical: 12, paddingHorizontal: 32 },
+  submitButtonText: { fontSize: 16, fontWeight: 'bold', color: '#fff' },
 });

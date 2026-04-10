@@ -271,7 +271,10 @@ function MemoryCardsGame({ onClose, groupId, userId }) {
   const [matched, setMatched] = useState([]);
   const [moves, setMoves] = useState(0);
   const [score, setScore] = useState(1000);
-  const matchedCountRef = React.useRef(0);
+  const [gameFinished, setGameFinished] = useState(false);
+
+  // Use state instead of ref to track matched count correctly
+  const [matchedCount, setMatchedCount] = useState(0);
 
   useEffect(() => {
     initializeGame();
@@ -283,10 +286,14 @@ function MemoryCardsGame({ onClose, groupId, userId }) {
       .sort(() => Math.random() - 0.5)
       .map((symbol, index) => ({ id: index, symbol }));
     setCards(deck);
-    matchedCountRef.current = 0;
+    setMatchedCount(0);
+    setGameFinished(false);
   };
 
   const finishGame = async (finalScore) => {
+    if (gameFinished) return; // Prevent double submission
+    setGameFinished(true);
+
     const { error } = await supabase.from('game_scores').insert({
       user_id: userId,
       group_id: groupId,
@@ -318,17 +325,19 @@ function MemoryCardsGame({ onClose, groupId, userId }) {
   };
 
   const checkMatch = (flippedIds, currentScore) => {
-    const [first, second] = flippedIds;
-    const firstCard = cards.find((c) => c.id === first);
-    const secondCard = cards.find((c) => c.id === second);
+    const [firstId, secondId] = flippedIds;
+    const firstCard = cards.find((c) => c.id === firstId);
+    const secondCard = cards.find((c) => c.id === secondId);
 
     if (firstCard.symbol === secondCard.symbol) {
-      const newMatched = [...matched, first, second];
+      const newMatched = [...matched, firstId, secondId];
       setMatched(newMatched);
       setFlipped([]);
 
-      matchedCountRef.current += 2;
-      if (matchedCountRef.current === cards.length) {
+      const newMatchedCount = matchedCount + 2;
+      setMatchedCount(newMatchedCount);
+
+      if (newMatchedCount === cards.length) {
         finishGame(currentScore);
       }
     } else {
@@ -341,7 +350,6 @@ function MemoryCardsGame({ onClose, groupId, userId }) {
       <Text style={styles.gameTitle}>Memory Cards</Text>
       <Text style={styles.scoreDisplay}>Score: {score}</Text>
       <Text style={styles.movesDisplay}>Moves: {moves}</Text>
-
       <View style={styles.memoryGrid}>
         {cards.map((card) => {
           const isFlipped = flipped.includes(card.id) || matched.includes(card.id);
@@ -351,14 +359,11 @@ function MemoryCardsGame({ onClose, groupId, userId }) {
               style={[styles.memoryCard, isFlipped && styles.memoryCardFlipped]}
               onPress={() => flipCard(card.id)}
             >
-              <Text style={styles.memoryCardText}>
-                {isFlipped ? card.symbol : '?'}
-              </Text>
+              <Text style={styles.memoryCardText}>{isFlipped ? card.symbol : '?'}</Text>
             </TouchableOpacity>
           );
         })}
       </View>
-
       <TouchableOpacity style={styles.closeBtn} onPress={onClose}>
         <Text style={styles.closeText}>Close</Text>
       </TouchableOpacity>
