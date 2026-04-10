@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useCallback } from 'react';
+import React, { useState, useCallback } from 'react';
 import {
   View,
   Text,
@@ -20,7 +20,6 @@ export default function ProfileScreen({ navigation }) {
   const [subjects, setSubjects] = useState([]);
   const [stats, setStats] = useState({ totalGroups: 0, totalHours: 0, quizzesCompleted: 0 });
 
-  // FIX #6: refresh profile whenever screen comes into focus (e.g. after EditProfile)
   const fetchProfile = useCallback(async () => {
     try {
       const { data: profileData } = await supabase
@@ -36,7 +35,6 @@ export default function ProfileScreen({ navigation }) {
         .eq('user_id', user.id);
       setSubjects(subjectsData || []);
 
-      // FIX #12: filter group count by accepted status only
       const { data: groupsData } = await supabase
         .from('group_members')
         .select('id')
@@ -56,9 +54,10 @@ export default function ProfileScreen({ navigation }) {
 
       setStats({
         totalGroups: groupsData?.length || 0,
-        totalHours: Math.round(
-          (progressData?.reduce((sum, p) => sum + parseFloat(p.study_hours), 0) || 0) * 10
-        ) / 10,
+        totalHours:
+          Math.round(
+            (progressData?.reduce((sum, p) => sum + parseFloat(p.study_hours), 0) || 0) * 10
+          ) / 10,
         quizzesCompleted: quizData?.length || 0,
       });
     } catch (error) {
@@ -66,12 +65,23 @@ export default function ProfileScreen({ navigation }) {
     }
   }, [user]);
 
-  useFocusEffect(fetchProfile);
+  // Fixed: wrap async call inside a non-async callback
+  useFocusEffect(
+    useCallback(() => {
+      fetchProfile();
+    }, [fetchProfile])
+  );
 
   const handleLogout = () => {
     Alert.alert('Logout', 'Are you sure you want to logout?', [
       { text: 'Cancel', style: 'cancel' },
-      { text: 'Logout', style: 'destructive', onPress: async () => { await signOut(); } },
+      {
+        text: 'Logout',
+        style: 'destructive',
+        onPress: async () => {
+          await signOut();
+        },
+      },
     ]);
   };
 
@@ -89,7 +99,10 @@ export default function ProfileScreen({ navigation }) {
         </View>
         <Text style={styles.name}>{profile?.full_name || 'User'}</Text>
         <Text style={styles.email}>{profile?.email}</Text>
-        <TouchableOpacity style={styles.editButton} onPress={() => navigation.navigate('EditProfile')}>
+        <TouchableOpacity
+          style={styles.editButton}
+          onPress={() => navigation.navigate('EditProfile')}
+        >
           <MaterialCommunityIcons name="pencil" size={16} color="#6366f1" />
           <Text style={styles.editButtonText}>Edit Profile</Text>
         </TouchableOpacity>
@@ -158,12 +171,18 @@ export default function ProfileScreen({ navigation }) {
 
       <View style={styles.section}>
         <Text style={styles.sectionTitle}>Settings</Text>
-        <TouchableOpacity style={styles.menuItem} onPress={() => navigation.navigate('EditProfile')}>
+        <TouchableOpacity
+          style={styles.menuItem}
+          onPress={() => navigation.navigate('EditProfile')}
+        >
           <MaterialCommunityIcons name="account-edit" size={24} color="#64748b" />
           <Text style={styles.menuText}>Edit Profile</Text>
           <MaterialCommunityIcons name="chevron-right" size={24} color="#cbd5e1" />
         </TouchableOpacity>
-        <TouchableOpacity style={styles.menuItem} onPress={() => navigation.navigate('PrivacyPolicy')}>
+        <TouchableOpacity
+          style={styles.menuItem}
+          onPress={() => navigation.navigate('PrivacyPolicy')}
+        >
           <MaterialCommunityIcons name="shield-check" size={24} color="#64748b" />
           <Text style={styles.menuText}>Privacy Policy</Text>
           <MaterialCommunityIcons name="chevron-right" size={24} color="#cbd5e1" />
@@ -184,18 +203,54 @@ export default function ProfileScreen({ navigation }) {
 
 const styles = StyleSheet.create({
   container: { flex: 1, backgroundColor: '#f8fafc' },
-  header: { padding: 32, alignItems: 'center', borderBottomLeftRadius: 24, borderBottomRightRadius: 24 },
-  avatarContainer: { width: 100, height: 100, borderRadius: 50, backgroundColor: '#fff', justifyContent: 'center', alignItems: 'center', marginBottom: 16 },
+  header: {
+    padding: 32,
+    alignItems: 'center',
+    borderBottomLeftRadius: 24,
+    borderBottomRightRadius: 24,
+  },
+  avatarContainer: {
+    width: 100,
+    height: 100,
+    borderRadius: 50,
+    backgroundColor: '#fff',
+    justifyContent: 'center',
+    alignItems: 'center',
+    marginBottom: 16,
+  },
   avatar: { width: 100, height: 100, borderRadius: 50 },
-  avatarPlaceholder: { width: 100, height: 100, borderRadius: 50, backgroundColor: '#f1f5f9', justifyContent: 'center', alignItems: 'center' },
+  avatarPlaceholder: {
+    width: 100,
+    height: 100,
+    borderRadius: 50,
+    backgroundColor: '#f1f5f9',
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
   name: { fontSize: 24, fontWeight: 'bold', color: '#fff', marginBottom: 4 },
   email: { fontSize: 14, color: '#e0e7ff', marginBottom: 16 },
-  editButton: { flexDirection: 'row', alignItems: 'center', backgroundColor: '#fff', paddingHorizontal: 20, paddingVertical: 10, borderRadius: 20, gap: 6 },
+  editButton: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: '#fff',
+    paddingHorizontal: 20,
+    paddingVertical: 10,
+    borderRadius: 20,
+    gap: 6,
+  },
   editButtonText: { color: '#6366f1', fontSize: 14, fontWeight: '600' },
   statsContainer: {
-    flexDirection: 'row', backgroundColor: '#fff', marginHorizontal: 16, marginTop: -24,
-    borderRadius: 16, padding: 20, elevation: 2,
-    shadowColor: '#000', shadowOffset: { width: 0, height: 2 }, shadowOpacity: 0.1, shadowRadius: 4,
+    flexDirection: 'row',
+    backgroundColor: '#fff',
+    marginHorizontal: 16,
+    marginTop: -24,
+    borderRadius: 16,
+    padding: 20,
+    elevation: 2,
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.1,
+    shadowRadius: 4,
   },
   statItem: { flex: 1, alignItems: 'center' },
   statDivider: { width: 1, backgroundColor: '#e2e8f0' },
@@ -204,14 +259,43 @@ const styles = StyleSheet.create({
   section: { padding: 16, marginTop: 8 },
   sectionTitle: { fontSize: 18, fontWeight: 'bold', color: '#1e293b', marginBottom: 16 },
   bio: { fontSize: 14, color: '#64748b', lineHeight: 20 },
-  infoRow: { flexDirection: 'row', alignItems: 'center', backgroundColor: '#fff', padding: 16, borderRadius: 12, marginBottom: 8 },
+  infoRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: '#fff',
+    padding: 16,
+    borderRadius: 12,
+    marginBottom: 8,
+  },
   infoText: { fontSize: 14, color: '#1e293b', marginLeft: 12, flex: 1 },
   subjectsContainer: { flexDirection: 'row', flexWrap: 'wrap', gap: 8 },
-  subjectChip: { backgroundColor: '#eef2ff', paddingHorizontal: 16, paddingVertical: 8, borderRadius: 20 },
+  subjectChip: {
+    backgroundColor: '#eef2ff',
+    paddingHorizontal: 16,
+    paddingVertical: 8,
+    borderRadius: 20,
+  },
   subjectText: { fontSize: 14, color: '#4338ca', fontWeight: '500' },
-  menuItem: { flexDirection: 'row', alignItems: 'center', backgroundColor: '#fff', padding: 16, borderRadius: 12, marginBottom: 8 },
+  menuItem: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: '#fff',
+    padding: 16,
+    borderRadius: 12,
+    marginBottom: 8,
+  },
   menuText: { fontSize: 16, color: '#1e293b', marginLeft: 12, flex: 1 },
-  logoutButton: { flexDirection: 'row', alignItems: 'center', justifyContent: 'center', backgroundColor: '#fff', borderWidth: 1, borderColor: '#fee2e2', borderRadius: 12, paddingVertical: 14, gap: 8 },
+  logoutButton: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: '#fff',
+    borderWidth: 1,
+    borderColor: '#fee2e2',
+    borderRadius: 12,
+    paddingVertical: 14,
+    gap: 8,
+  },
   logoutText: { color: '#ef4444', fontSize: 16, fontWeight: '600' },
   version: { textAlign: 'center', color: '#94a3b8', fontSize: 12, paddingVertical: 24 },
 });
