@@ -381,6 +381,8 @@ function QuickMathDuel({ onClose, groupId, userId }) {
   const [round, setRound] = useState(1);
   const [timeLeft, setTimeLeft] = useState(10);
   const maxRounds = 5;
+  // FIX #5: track score via ref so finishGame always reads the latest value
+  const scoreRef = React.useRef(0);
 
   useEffect(() => {
     generateProblem();
@@ -391,7 +393,7 @@ function QuickMathDuel({ onClose, groupId, userId }) {
       const timer = setTimeout(() => setTimeLeft(timeLeft - 1), 1000);
       return () => clearTimeout(timer);
     } else if (timeLeft === 0) {
-      nextRound(false);
+      advanceRound(false);
     }
   }, [timeLeft]);
 
@@ -400,14 +402,12 @@ function QuickMathDuel({ onClose, groupId, userId }) {
     const b = Math.floor(Math.random() * 20) + 1;
     const operations = ['+', '-', '*'];
     const op = operations[Math.floor(Math.random() * operations.length)];
-
     let correctAnswer;
     switch (op) {
       case '+': correctAnswer = a + b; break;
       case '-': correctAnswer = a - b; break;
       case '*': correctAnswer = a * b; break;
     }
-
     setProblem({ a, b, op, correctAnswer });
     setAnswer('');
     setTimeLeft(10);
@@ -416,12 +416,14 @@ function QuickMathDuel({ onClose, groupId, userId }) {
   const checkAnswer = () => {
     const correct = parseInt(answer) === problem.correctAnswer;
     if (correct) {
-      setScore((prev) => prev + (timeLeft * 10));
+      const gained = timeLeft * 10;
+      scoreRef.current += gained;
+      setScore(scoreRef.current);
     }
-    nextRound(correct);
+    advanceRound(correct);
   };
 
-  const nextRound = (wasCorrect) => {
+  const advanceRound = (wasCorrect) => {
     if (round >= maxRounds) {
       finishGame();
     } else {
@@ -430,17 +432,16 @@ function QuickMathDuel({ onClose, groupId, userId }) {
   };
 
   const finishGame = async () => {
+    const finalScore = scoreRef.current;
     const { error } = await supabase.from('game_scores').insert({
       user_id: userId,
       group_id: groupId,
       game_type: 'quickmath',
-      score: score,
+      score: finalScore,
       mode: 'solo',
     });
-    if (error) {
-      console.error('Error submitting quickmath score:', error);
-    }
-    Alert.alert('Game Over!', `Final Score: ${score}`, [
+    if (error) console.error('Error submitting quickmath score:', error);
+    Alert.alert('Game Over!', `Final Score: ${finalScore}`, [
       { text: 'OK', onPress: onClose },
     ]);
   };
@@ -455,13 +456,11 @@ function QuickMathDuel({ onClose, groupId, userId }) {
       <Text style={[styles.timerDisplay, timeLeft < 4 && styles.timerWarning]}>
         Time: {timeLeft}s
       </Text>
-
       <View style={styles.mathProblem}>
         <Text style={styles.mathText}>
           {problem.a} {problem.op} {problem.b} = ?
         </Text>
       </View>
-
       <View style={styles.mathInput}>
         {[1, 2, 3, 4, 5, 6, 7, 8, 9, 0].map((num) => (
           <TouchableOpacity
@@ -473,9 +472,7 @@ function QuickMathDuel({ onClose, groupId, userId }) {
           </TouchableOpacity>
         ))}
       </View>
-
       <Text style={styles.answerDisplay}>{answer || '_'}</Text>
-
       <View style={styles.mathControls}>
         <TouchableOpacity style={styles.mathClear} onPress={() => setAnswer('')}>
           <Text style={styles.mathClearText}>Clear</Text>
@@ -689,6 +686,17 @@ export default function GroupChatScreen({ route, navigation }) {
 
   const onSend = useCallback(async (m = []) => {
     const msg = m[0];
+
+    // FIX #3: fetch sender display name from profiles table, not auth user object
+    const { data: profileData } = await supabase
+      .from('profiles')
+      .select('full_name, avatar_url')
+      .eq('id', user.id)
+      .maybeSingle();
+
+    const senderName = profileData?.full_name || user.email || 'User';
+    const senderAvatar = profileData?.avatar_url || null;
+
     const optimisticMessage = {
       ...msg,
       _id: `temp-${Date.now()}`,
@@ -703,8 +711,8 @@ export default function GroupChatScreen({ route, navigation }) {
         group_id: groupId,
         user_id: user.id,
         content: msg.text,
-        full_name: user.full_name || user.email,
-        avatar_url: user.avatar_url || null,
+        full_name: senderName,
+        avatar_url: senderAvatar,
       })
       .select()
       .single();

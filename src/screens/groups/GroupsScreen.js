@@ -57,37 +57,23 @@ export default function GroupsScreen({ navigation }) {
 
   const fetchGroups = async () => {
     try {
-      // Fetch user's groups (only accepted)
       const { data: myGroupsData, error: myGroupsError } = await supabase
         .from('group_members')
         .select(`
-          id,
-          role,
-          status,
+          id, role, status,
           study_groups (
-            id,
-            name,
-            description,
-            avatar_url,
-            max_members,
-            created_at,
-            subject_id,
-            subjects (
-              id,
-              name
-            )
+            id, name, description, avatar_url, max_members, created_at, subject_id,
+            subjects (id, name)
           )
         `)
         .eq('user_id', user.id)
         .eq('status', 'accepted');
 
-      if (myGroupsError) {
-        console.error('Error fetching my groups:', myGroupsError);
-      }
+      if (myGroupsError) console.error('Error fetching my groups:', myGroupsError);
 
       const formattedMyGroups = (myGroupsData || [])
         .map(item => item.study_groups)
-        .filter(group => group !== null);
+        .filter(Boolean);
 
       const groupsWithCounts = await Promise.all(
         formattedMyGroups.map(async (group) => {
@@ -96,37 +82,29 @@ export default function GroupsScreen({ navigation }) {
             .select('*', { count: 'exact', head: true })
             .eq('group_id', group.id)
             .eq('status', 'accepted');
-          
-          return {
-            ...group,
-            member_count: count || 0,
-          };
+          return { ...group, member_count: count || 0 };
         })
       );
-
       setMyGroups(groupsWithCounts);
 
-      // Fetch ranked groups using matching algorithm
+      // FIX #7: handle RPC failure gracefully with empty fallback
       const { data: rankedData, error: rankedError } = await supabase
         .rpc('get_ranked_groups_for_user', { p_user_id: user.id });
 
       if (rankedError) {
         console.error('Error fetching ranked groups:', rankedError);
+        setRankedGroups([]);
         return;
       }
 
-      // Get user's membership status for ranked groups
       const { data: userMemberships } = await supabase
         .from('group_members')
         .select('group_id, status')
         .eq('user_id', user.id);
 
       const membershipMap = {};
-      userMemberships?.forEach(m => {
-        membershipMap[m.group_id] = m.status;
-      });
+      (userMemberships || []).forEach(m => { membershipMap[m.group_id] = m.status; });
 
-      // Format ranked groups with membership status
       const formattedRanked = (rankedData || []).map(group => ({
         id: group.group_id,
         name: group.group_name,
@@ -142,9 +120,7 @@ export default function GroupsScreen({ navigation }) {
         is_full: group.is_full,
         status: membershipMap[group.group_id] || null,
       }));
-
       setRankedGroups(formattedRanked);
-      
     } catch (error) {
       console.error('Error fetching groups:', error);
     }

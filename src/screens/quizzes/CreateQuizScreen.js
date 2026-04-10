@@ -38,13 +38,11 @@ export default function CreateQuizScreen({ navigation }) {
     try {
       const { data } = await supabase
         .from('group_members')
-        .select(`
-          *,
-          study_groups (id, name)
-        `)
-        .eq('user_id', user.id);
+        .select('*, study_groups (id, name)')
+        .eq('user_id', user.id)
+        .eq('status', 'accepted'); // FIX #15: only show groups user actually belongs to
 
-      setUserGroups(data?.map(gm => gm.study_groups) || []);
+      setUserGroups(data?.map(gm => gm.study_groups).filter(Boolean) || []);
     } catch (error) {
       console.error('Error fetching groups:', error);
     }

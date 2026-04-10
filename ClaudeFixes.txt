@@ -1,0 +1,2488 @@
+## STEP 1: PROJECT SCAN
+
+```
+StudyBuddy/
+├── App.js
+├── app.json
+├── babel.config.js
+├── eas.json
+├── package.json
+├── tailwind.config.js
+└── src/
+    ├── components/
+    │   ├── HeaderProfileBell.js
+    │   ├── NotificationBell.js
+    │   └── StudyTimerComponent.js
+    ├── config/
+    │   └── supabase.js
+    ├── contexts/
+    │   ├── AuthContext.js
+    │   ├── NotificationContext.js
+    │   └── RefreshContext.js
+    ├── helpers/
+    │   ├── checkAndUnlockAchievements.js
+    │   ├── groupHelpers.js
+    │   ├── pushNotificationHelper.js
+    │   ├── sessionCleanupHelper.js
+    │   ├── sessionHelper.js
+    │   └── sessionParticipantsHelper.js
+    ├── hooks/
+    │   └── useNotifications.js
+    ├── screens/
+    │   ├── auth/ (LoginScreen, RegisterScreen)
+    │   ├── calendar/ (CalendarScreen)
+    │   ├── gamification/ (LeaderboardScreen)
+    │   ├── groups/ (CreateGroup, GroupChat, GroupDetail, GroupsScreen)
+    │   ├── home/ (HomeScreen)
+    │   ├── notifications/ (NotificationsScreen)
+    │   ├── profile/ (EditProfile, ProfileScreen, ProfileSetup)
+    │   ├── progress/ (LogStudyHours, ProgressScreen)
+    │   └── quizzes/ (CreateQuiz, QuizDetail, QuizzesScreen, TakeQuiz)
+    └── utils/
+        └── studyTimeTracker.js
+```
+
+---
+
+## STEP 2: ISSUE DETECTION
+
+| # | Severity | Location | Issue |
+|---|----------|----------|-------|
+| 1 | 🔴 CRITICAL | `supabase.js` | Hardcoded API credentials in source code |
+| 2 | 🔴 CRITICAL | `AuthContext.js` | `ensureProfileExists` called with unstable RLS timing; race condition |
+| 3 | 🔴 HIGH | `app.json` | Missing `googleServicesFile` / SHA; `CAMERA`, `READ/WRITE_EXTERNAL_STORAGE` declared but never used in code |
+| 4 | 🔴 HIGH | `GroupChatScreen.js` | `alert()` (global JS) used inside async — will crash on Android in strict mode |
+| 5 | 🔴 HIGH | `ProgressScreen.js` | `alert()` used directly (not `Alert` from RN) |
+| 6 | 🔴 HIGH | `HomeScreen.js` | `joinGroup()` inserts with no `status: 'pending'` — bypasses approval flow |
+| 7 | 🟠 HIGH | `NotificationContext.js` | Realtime channel name `'notifications'` is static — collides across users |
+| 8 | 🟠 HIGH | `CalendarScreen.js` | `navigation.setOptions` inside `useEffect` with no stable dep — re-runs every render |
+| 9 | 🟠 HIGH | `LoginScreen.js` | `ensureProfileExists` called but function is not imported/defined in that file |
+| 10 | 🟠 HIGH | Entire app | No Privacy Policy screen or link — required by Google Play |
+| 11 | 🟠 HIGH | `app.json` | `READ_EXTERNAL_STORAGE` / `WRITE_EXTERNAL_STORAGE` dangerous permissions unused |
+| 12 | 🟡 MEDIUM | `RefreshContext.js` | `subscribeToTable` creates duplicate channels but guard uses JSON.stringify on filter which is fragile |
+| 13 | 🟡 MEDIUM | `TakeQuizScreen.js` | Timer `submitQuiz(true)` called inside `setTimeLeft` setter — stale closure risk |
+| 14 | 🟡 MEDIUM | `MemoryCardsGame` | `matchedCountRef.current` mutated inside render-derived `checkMatch` — ref incremented twice on re-render |
+| 15 | 🟡 MEDIUM | `pushNotificationHelper.js` | `getExpoPushTokenAsync()` called without `projectId` — will fail in production EAS builds |
+
+---
+
+## STEP 3 & 4: FIXED FILES
+
+### FILE: src/config/supabase.js
+```javascript
+import 'react-native-url-polyfill/auto';
+import { createClient } from '@supabase/supabase-js';
+import * as SecureStore from 'expo-secure-store';
+import Constants from 'expo-constants';
+
+const SUPABASE_URL = Constants.expoConfig?.extra?.supabaseUrl;
+const SUPABASE_ANON_KEY = Constants.expoConfig?.extra?.supabaseAnonKey;
+
+if (!SUPABASE_URL || !SUPABASE_ANON_KEY) {
+  throw new Error(
+    'Missing Supabase config. Set supabaseUrl and supabaseAnonKey in app.json > extra.'
+  );
+}
+
+const ExpoSecureStoreAdapter = {
+  getItem: async (key) => {
+    try {
+      return await SecureStore.getItemAsync(key);
+    } catch {
+      return null;
+    }
+  },
+  setItem: async (key, value) => {
+    try {
+      await SecureStore.setItemAsync(key, value);
+    } catch (error) {
+      console.error('SecureStore setItem error:', error);
+    }
+  },
+  removeItem: async (key) => {
+    try {
+      await SecureStore.deleteItemAsync(key);
+    } catch (error) {
+      console.error('SecureStore removeItem error:', error);
+    }
+  },
+};
+
+export const supabase = createClient(SUPABASE_URL, SUPABASE_ANON_KEY, {
+  auth: {
+    storage: ExpoSecureStoreAdapter,
+    autoRefreshToken: true,
+    persistSession: true,
+    detectSessionInUrl: false,
+  },
+});
+```
+
+### FILE: app.json
+```json
+{
+  "expo": {
+    "name": "StudyBuddy",
+    "slug": "studybuddy-app",
+    "scheme": "com.studybuddy.app",
+    "version": "1.0.1",
+    "orientation": "portrait",
+    "icon": "./assets/icon.png",
+    "userInterfaceStyle": "automatic",
+    "splash": {
+      "image": "./assets/splash.png",
+      "resizeMode": "contain",
+      "backgroundColor": "#6366f1"
+    },
+    "assetBundlePatterns": ["**/*"],
+    "ios": {
+      "supportsTablet": true,
+      "bundleIdentifier": "com.studybuddy.app",
+      "infoPlist": {
+        "CFBundleURLTypes": [
+          {
+            "CFBundleURLSchemes": ["com.studybuddy.app"]
+          }
+        ]
+      }
+    },
+    "android": {
+      "adaptiveIcon": {
+        "foregroundImage": "./assets/adaptive-icon.png",
+        "backgroundColor": "#ffffff"
+      },
+      "versionCode": 2,
+      "package": "com.studybuddy.app",
+      "useNextNotificationsApi": true,
+      "permissions": [
+        "NOTIFICATIONS",
+        "RECEIVE_BOOT_COMPLETED"
+      ],
+      "intentFilters": [
+        {
+          "action": "VIEW",
+          "autoVerify": true,
+          "data": [
+            {
+              "scheme": "com.studybuddy.app",
+              "host": "auth",
+              "pathPrefix": "/callback"
+            }
+          ],
+          "category": ["BROWSABLE", "DEFAULT"]
+        }
+      ]
+    },
+    "notification": {
+      "icon": "./assets/notification-icon.png",
+      "color": "#6366f1"
+    },
+    "web": {
+      "favicon": "./assets/favicon.png"
+    },
+    "plugins": [
+      "expo-secure-store",
+      "expo-web-browser",
+      [
+        "@react-native-google-signin/google-signin",
+        {
+          "iosUrlScheme": "com.googleusercontent.apps.16707548496-cvdvvco9uv4g1f4o7es6sgsebj77svv2"
+        }
+      ]
+    ],
+    "extra": {
+      "supabaseUrl": "https://zlrurnxpntyrpasyflkt.supabase.co",
+      "supabaseAnonKey": "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InpscnVybnhwbnR5cnBhc3lmbGt0Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzAzMjUzMzEsImV4cCI6MjA4NTkwMTMzMX0.2MAJ4I8VaVwCKcw5YMFlgKXojjFzyqVDr8kvUipnJR4",
+      "eas": {
+        "projectId": "afe34963-1d5d-4d98-b34f-455391db0baf"
+      }
+    },
+    "owner": "reylaurence",
+    "androidNavigationBar": {
+      "visible": "sticky-immersive",
+      "backgroundColor": "#ffffff"
+    }
+  }
+}
+```
+
+> ⚠️ **Next step for production:** Move `supabaseUrl` and `supabaseAnonKey` out of `app.json` into EAS Secrets (`eas secret:create`) and reference them via `process.env` in a `app.config.js`. The `app.json` approach above is already safer than hardcoding in source, but EAS Secrets is the correct production pattern.
+
+### FILE: src/contexts/NotificationContext.js
+```javascript
+import React, { createContext, useEffect, useState } from 'react';
+import { supabase } from '../config/supabase';
+import { useAuth } from './AuthContext';
+
+export const NotificationContext = createContext();
+
+export const NotificationProvider = ({ children }) => {
+  const { user } = useAuth();
+  const [notifications, setNotifications] = useState([]);
+
+  useEffect(() => {
+    if (!user) return;
+
+    fetchNotifications();
+
+    // Use user-scoped channel name to prevent cross-user collisions
+    const channelName = `notifications-user-${user.id}`;
+    const channel = supabase
+      .channel(channelName)
+      .on(
+        'postgres_changes',
+        {
+          event: 'INSERT',
+          schema: 'public',
+          table: 'notifications',
+          filter: `user_id=eq.${user.id}`,
+        },
+        (payload) => {
+          setNotifications((prev) => [payload.new, ...prev]);
+        }
+      )
+      .subscribe();
+
+    return () => {
+      supabase.removeChannel(channel);
+    };
+  }, [user]);
+
+  const fetchNotifications = async () => {
+    const { data } = await supabase
+      .from('notifications')
+      .select('*')
+      .eq('user_id', user.id)
+      .order('created_at', { ascending: false });
+
+    setNotifications(data || []);
+  };
+
+  return (
+    <NotificationContext.Provider value={{ notifications, setNotifications }}>
+      {children}
+    </NotificationContext.Provider>
+  );
+};
+```
+
+### FILE: src/screens/auth/LoginScreen.js
+```javascript
+import React, { useState } from 'react';
+import {
+  View,
+  Text,
+  TextInput,
+  TouchableOpacity,
+  StyleSheet,
+  KeyboardAvoidingView,
+  Platform,
+  ScrollView,
+  Alert,
+} from 'react-native';
+import { LinearGradient } from 'expo-linear-gradient';
+import { MaterialCommunityIcons } from '@expo/vector-icons';
+import { useAuth } from '../../contexts/AuthContext';
+
+export default function LoginScreen({ navigation }) {
+  const [email, setEmail] = useState('');
+  const [password, setPassword] = useState('');
+  const [loading, setLoading] = useState(false);
+  const [showPassword, setShowPassword] = useState(false);
+
+  const { signInWithEmail, signInWithGoogle } = useAuth();
+
+  const handleEmailLogin = async () => {
+    if (!email || !password) {
+      Alert.alert('Error', 'Please fill in all fields');
+      return;
+    }
+
+    setLoading(true);
+    const { error } = await signInWithEmail(email, password);
+    setLoading(false);
+
+    if (error) {
+      Alert.alert('Login Failed', error.message);
+    }
+    // Navigation is handled automatically by AuthContext + Navigation in App.js
+  };
+
+  const handleGoogleLogin = async () => {
+    setLoading(true);
+    const { error } = await signInWithGoogle();
+    setLoading(false);
+
+    if (error && error.message !== 'Authentication cancelled') {
+      Alert.alert('Login Failed', error.message || 'Failed to sign in with Google');
+    }
+  };
+
+  return (
+    <KeyboardAvoidingView
+      behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
+      style={styles.container}
+    >
+      <ScrollView contentContainerStyle={styles.scrollContent}>
+        <LinearGradient
+          colors={['#6366f1', '#8b5cf6', '#d946ef']}
+          style={styles.gradient}
+        >
+          <View style={styles.header}>
+            <MaterialCommunityIcons name="book-open-variant" size={80} color="#fff" />
+            <Text style={styles.title}>StudyBuddy</Text>
+            <Text style={styles.subtitle}>Learn Together, Achieve More</Text>
+          </View>
+        </LinearGradient>
+
+        <View style={styles.formContainer}>
+          <Text style={styles.welcomeText}>Welcome Back!</Text>
+
+          <View style={styles.inputContainer}>
+            <MaterialCommunityIcons
+              name="email-outline"
+              size={20}
+              color="#64748b"
+              style={styles.inputIcon}
+            />
+            <TextInput
+              style={styles.input}
+              placeholder="Email"
+              value={email}
+              onChangeText={setEmail}
+              keyboardType="email-address"
+              autoCapitalize="none"
+              placeholderTextColor="#94a3b8"
+            />
+          </View>
+
+          <View style={styles.inputContainer}>
+            <MaterialCommunityIcons
+              name="lock-outline"
+              size={20}
+              color="#64748b"
+              style={styles.inputIcon}
+            />
+            <TextInput
+              style={styles.input}
+              placeholder="Password"
+              value={password}
+              onChangeText={setPassword}
+              secureTextEntry={!showPassword}
+              placeholderTextColor="#94a3b8"
+            />
+            <TouchableOpacity
+              onPress={() => setShowPassword(!showPassword)}
+              style={styles.eyeIcon}
+            >
+              <MaterialCommunityIcons
+                name={showPassword ? 'eye-off-outline' : 'eye-outline'}
+                size={20}
+                color="#64748b"
+              />
+            </TouchableOpacity>
+          </View>
+
+          <TouchableOpacity
+            style={[styles.button, loading && styles.buttonDisabled]}
+            onPress={handleEmailLogin}
+            disabled={loading}
+          >
+            <LinearGradient
+              colors={['#6366f1', '#8b5cf6']}
+              style={styles.buttonGradient}
+              start={{ x: 0, y: 0 }}
+              end={{ x: 1, y: 0 }}
+            >
+              <Text style={styles.buttonText}>
+                {loading ? 'Signing In...' : 'Sign In'}
+              </Text>
+            </LinearGradient>
+          </TouchableOpacity>
+
+          <View style={styles.divider}>
+            <View style={styles.dividerLine} />
+            <Text style={styles.dividerText}>OR</Text>
+            <View style={styles.dividerLine} />
+          </View>
+
+          <TouchableOpacity
+            style={styles.googleButton}
+            onPress={handleGoogleLogin}
+            disabled={loading}
+          >
+            <MaterialCommunityIcons name="google" size={20} color="#EA4335" />
+            <Text style={styles.googleButtonText}>Continue with Google</Text>
+          </TouchableOpacity>
+
+          <View style={styles.signupContainer}>
+            <Text style={styles.signupText}>Don't have an account? </Text>
+            <TouchableOpacity onPress={() => navigation.navigate('Register')}>
+              <Text style={styles.signupLink}>Sign Up</Text>
+            </TouchableOpacity>
+          </View>
+
+          <TouchableOpacity
+            style={styles.privacyLink}
+            onPress={() => navigation.navigate('PrivacyPolicy')}
+          >
+            <Text style={styles.privacyLinkText}>Privacy Policy</Text>
+          </TouchableOpacity>
+        </View>
+      </ScrollView>
+    </KeyboardAvoidingView>
+  );
+}
+
+const styles = StyleSheet.create({
+  container: { flex: 1, backgroundColor: '#f8fafc' },
+  scrollContent: { flexGrow: 1 },
+  gradient: { height: 280, justifyContent: 'center', alignItems: 'center' },
+  header: { alignItems: 'center', marginTop: 40 },
+  title: { fontSize: 42, fontWeight: 'bold', color: '#fff', marginTop: 16 },
+  subtitle: { fontSize: 16, color: '#e0e7ff', marginTop: 8 },
+  formContainer: {
+    flex: 1,
+    backgroundColor: '#fff',
+    borderTopLeftRadius: 30,
+    borderTopRightRadius: 30,
+    marginTop: -30,
+    paddingHorizontal: 24,
+    paddingTop: 32,
+  },
+  welcomeText: { fontSize: 28, fontWeight: 'bold', color: '#1e293b', marginBottom: 24 },
+  inputContainer: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: '#f1f5f9',
+    borderRadius: 12,
+    marginBottom: 16,
+    paddingHorizontal: 16,
+    height: 56,
+  },
+  inputIcon: { marginRight: 12 },
+  input: { flex: 1, fontSize: 16, color: '#1e293b' },
+  eyeIcon: { padding: 8 },
+  button: { marginTop: 8, borderRadius: 12, overflow: 'hidden' },
+  buttonDisabled: { opacity: 0.6 },
+  buttonGradient: { paddingVertical: 16, alignItems: 'center' },
+  buttonText: { color: '#fff', fontSize: 16, fontWeight: 'bold' },
+  divider: { flexDirection: 'row', alignItems: 'center', marginVertical: 24 },
+  dividerLine: { flex: 1, height: 1, backgroundColor: '#e2e8f0' },
+  dividerText: { marginHorizontal: 16, color: '#94a3b8', fontSize: 14 },
+  googleButton: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: '#fff',
+    borderWidth: 1,
+    borderColor: '#e2e8f0',
+    borderRadius: 12,
+    paddingVertical: 16,
+  },
+  googleButtonText: { marginLeft: 12, fontSize: 16, fontWeight: '600', color: '#1e293b' },
+  signupContainer: { flexDirection: 'row', justifyContent: 'center', marginTop: 24 },
+  signupText: { color: '#64748b', fontSize: 14 },
+  signupLink: { color: '#6366f1', fontSize: 14, fontWeight: 'bold' },
+  privacyLink: { alignItems: 'center', marginTop: 16, marginBottom: 32 },
+  privacyLinkText: { color: '#6366f1', fontSize: 13 },
+});
+```
+
+### FILE: src/screens/home/HomeScreen.js
+```javascript
+import React, { useState, useEffect } from 'react';
+import {
+  View,
+  Text,
+  ScrollView,
+  StyleSheet,
+  TouchableOpacity,
+  RefreshControl,
+  Image,
+  Alert,
+} from 'react-native';
+import { LinearGradient } from 'expo-linear-gradient';
+import { MaterialCommunityIcons } from '@expo/vector-icons';
+import { useAuth } from '../../contexts/AuthContext';
+import { supabase } from '../../config/supabase';
+import { useRefresh } from '../../contexts/RefreshContext';
+
+export default function HomeScreen({ navigation }) {
+  const { user } = useAuth();
+  const { refreshKey, subscribeToTable } = useRefresh();
+
+  const [profile, setProfile] = useState(null);
+  const [groups, setGroups] = useState([]);
+  const [suggestedGroups, setSuggestedGroups] = useState([]);
+  const [upcomingSessions, setUpcomingSessions] = useState([]);
+  const [refreshing, setRefreshing] = useState(false);
+  const [stats, setStats] = useState({
+    totalHours: 0,
+    quizzesCompleted: 0,
+    achievements: 0,
+  });
+
+  useEffect(() => {
+    if (!user) return;
+    fetchUserData();
+
+    const unsubGroups = subscribeToTable('group_members', `user_id=eq.${user.id}`, () => {
+      fetchUserData();
+    });
+    const unsubSessions = subscribeToTable('study_sessions', null, () => {
+      fetchUserData();
+    });
+    const unsubProgress = subscribeToTable('study_progress', `user_id=eq.${user.id}`, () => {
+      fetchUserData();
+    });
+
+    return () => {
+      unsubGroups();
+      unsubSessions();
+      unsubProgress();
+    };
+  }, [user]);
+
+  const fetchUserData = async () => {
+    if (!user) return;
+
+    try {
+      const { data: profileData } = await supabase
+        .from('profiles')
+        .select('*')
+        .eq('id', user.id)
+        .maybeSingle();
+
+      setProfile(profileData);
+
+      const { data: groupsData } = await supabase
+        .from('group_members')
+        .select(`
+          *,
+          study_groups (
+            id,
+            name,
+            description,
+            avatar_url,
+            subjects (name)
+          )
+        `)
+        .eq('user_id', user.id)
+        .eq('status', 'accepted')
+        .limit(3);
+
+      const myGroups = groupsData?.map((gm) => gm.study_groups).filter(Boolean) || [];
+      setGroups(myGroups);
+
+      const { data: userSubjects } = await supabase
+        .from('user_subjects')
+        .select('subject_id')
+        .eq('user_id', user.id);
+
+      if (userSubjects?.length > 0) {
+        const subjectIds = userSubjects.map((us) => us.subject_id);
+        const myGroupIds = myGroups.map((g) => g.id);
+
+        const { data: suggested } = await supabase
+          .from('study_groups')
+          .select('*, subjects (name)')
+          .in('subject_id', subjectIds)
+          .not('id', 'in', myGroupIds.length > 0 ? `(${myGroupIds.join(',')})` : '(null)')
+          .limit(3);
+
+        setSuggestedGroups(suggested || []);
+      }
+
+      const now = new Date().toISOString();
+      const { data: sessions } = await supabase
+        .from('study_sessions')
+        .select('*, study_groups (name)')
+        .gte('start_time', now)
+        .order('start_time', { ascending: true })
+        .limit(3);
+
+      setUpcomingSessions(sessions || []);
+
+      const { data: progressData } = await supabase
+        .from('study_progress')
+        .select('study_hours')
+        .eq('user_id', user.id);
+
+      const totalHours =
+        progressData?.reduce((sum, p) => sum + parseFloat(p.study_hours), 0) || 0;
+
+      const { data: quizData } = await supabase
+        .from('quiz_attempts')
+        .select('id')
+        .eq('user_id', user.id)
+        .not('completed_at', 'is', null);
+
+      const { data: achievementsData } = await supabase
+        .from('user_achievements')
+        .select('id')
+        .eq('user_id', user.id);
+
+      setStats({
+        totalHours: Math.round(totalHours * 10) / 10,
+        quizzesCompleted: quizData?.length || 0,
+        achievements: achievementsData?.length || 0,
+      });
+    } catch (error) {
+      console.error('Error fetching user data:', error);
+    }
+  };
+
+  const onRefresh = async () => {
+    setRefreshing(true);
+    await fetchUserData();
+    setRefreshing(false);
+  };
+
+  // Fixed: joinGroup now uses 'pending' status to respect approval flow
+  const joinGroup = async (groupId) => {
+    try {
+      const { data: existing } = await supabase
+        .from('group_members')
+        .select('id, status')
+        .eq('group_id', groupId)
+        .eq('user_id', user.id)
+        .maybeSingle();
+
+      if (existing) {
+        if (existing.status === 'pending') {
+          Alert.alert('Info', 'Your join request is pending approval.');
+        } else if (existing.status === 'accepted') {
+          Alert.alert('Info', 'You are already a member of this group.');
+        }
+        return;
+      }
+
+      const { error } = await supabase.from('group_members').insert({
+        group_id: groupId,
+        user_id: user.id,
+        role: 'member',
+        status: 'pending',
+      });
+
+      if (error) throw error;
+      Alert.alert('Request Sent', 'Your request to join has been sent.');
+    } catch (error) {
+      console.error('Error joining group:', error);
+      Alert.alert('Error', 'Failed to send join request.');
+    }
+  };
+
+  const formatDate = (dateString) =>
+    new Date(dateString).toLocaleDateString('en-US', {
+      month: 'short',
+      day: 'numeric',
+      hour: '2-digit',
+      minute: '2-digit',
+    });
+
+  return (
+    <ScrollView
+      style={styles.container}
+      refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} />}
+    >
+      <LinearGradient colors={['#6366f1', '#8b5cf6']} style={styles.headerCard}>
+        <View style={styles.headerContent}>
+          <View style={styles.greetingContainer}>
+            <Text style={styles.greeting}>
+              Hello, {profile?.full_name || 'Student'}!
+            </Text>
+            <Text style={styles.headerSubtext}>Ready to study today?</Text>
+          </View>
+
+          <TouchableOpacity
+            onPress={() => navigation.navigate('Profile')}
+            style={styles.avatarContainer}
+          >
+            {profile?.avatar_url ? (
+              <Image
+                source={{ uri: profile.avatar_url }}
+                style={styles.avatar}
+                resizeMode="cover"
+              />
+            ) : (
+              <View style={styles.avatarPlaceholder}>
+                <MaterialCommunityIcons name="account" size={32} color="#6366f1" />
+              </View>
+            )}
+          </TouchableOpacity>
+        </View>
+
+        <View style={styles.statsContainer}>
+          <View style={styles.statItem}>
+            <MaterialCommunityIcons name="clock-outline" size={24} color="#fff" />
+            <Text style={styles.statValue}>{stats.totalHours}h</Text>
+            <Text style={styles.statLabel}>Study Time</Text>
+          </View>
+          <View style={styles.statDivider} />
+          <View style={styles.statItem}>
+            <MaterialCommunityIcons name="brain" size={24} color="#fff" />
+            <Text style={styles.statValue}>{stats.quizzesCompleted}</Text>
+            <Text style={styles.statLabel}>Quizzes</Text>
+          </View>
+          <View style={styles.statDivider} />
+          <View style={styles.statItem}>
+            <MaterialCommunityIcons name="trophy-outline" size={24} color="#fff" />
+            <Text style={styles.statValue}>{stats.achievements}</Text>
+            <Text style={styles.statLabel}>Badges</Text>
+          </View>
+        </View>
+      </LinearGradient>
+
+      <View style={styles.section}>
+        <Text style={styles.sectionTitle}>Quick Actions</Text>
+        <View style={styles.quickActions}>
+          <TouchableOpacity
+            style={styles.actionCard}
+            onPress={() => navigation.navigate('CreateGroup')}
+          >
+            <View style={[styles.actionIconContainer, { backgroundColor: '#dbeafe' }]}>
+              <MaterialCommunityIcons name="account-group-outline" size={28} color="#3b82f6" />
+            </View>
+            <Text style={styles.actionText}>Create Group</Text>
+          </TouchableOpacity>
+
+          <TouchableOpacity
+            style={styles.actionCard}
+            onPress={() => navigation.navigate('Groups')}
+          >
+            <View style={[styles.actionIconContainer, { backgroundColor: '#fce7f3' }]}>
+              <MaterialCommunityIcons name="magnify" size={28} color="#ec4899" />
+            </View>
+            <Text style={styles.actionText}>Find Groups</Text>
+          </TouchableOpacity>
+
+          <TouchableOpacity
+            style={styles.actionCard}
+            onPress={() => navigation.navigate('Calendar')}
+          >
+            <View style={[styles.actionIconContainer, { backgroundColor: '#dcfce7' }]}>
+              <MaterialCommunityIcons name="calendar-plus" size={28} color="#22c55e" />
+            </View>
+            <Text style={styles.actionText}>Schedule</Text>
+          </TouchableOpacity>
+
+          <TouchableOpacity
+            style={styles.actionCard}
+            onPress={() => navigation.navigate('Quizzes')}
+          >
+            <View style={[styles.actionIconContainer, { backgroundColor: '#fef3c7' }]}>
+              <MaterialCommunityIcons name="brain" size={28} color="#f59e0b" />
+            </View>
+            <Text style={styles.actionText}>Quizzes</Text>
+          </TouchableOpacity>
+        </View>
+      </View>
+
+      {groups.length > 0 && (
+        <View style={styles.section}>
+          <View style={styles.sectionHeader}>
+            <Text style={styles.sectionTitle}>My Study Groups</Text>
+            <TouchableOpacity onPress={() => navigation.navigate('Groups')}>
+              <Text style={styles.seeAll}>See All</Text>
+            </TouchableOpacity>
+          </View>
+          {groups.map((group) => (
+            <TouchableOpacity
+              key={group.id}
+              style={styles.groupCard}
+              onPress={() => navigation.navigate('GroupDetail', { groupId: group.id })}
+            >
+              <View style={styles.groupIcon}>
+                {group.avatar_url ? (
+                  <Image source={{ uri: group.avatar_url }} style={styles.groupImage} />
+                ) : (
+                  <MaterialCommunityIcons name="account-group" size={24} color="#6366f1" />
+                )}
+              </View>
+              <View style={styles.groupInfo}>
+                <Text style={styles.groupName}>{group.name}</Text>
+                <Text style={styles.groupSubject}>{group.subjects?.name || 'General'}</Text>
+              </View>
+              <MaterialCommunityIcons name="chevron-right" size={24} color="#94a3b8" />
+            </TouchableOpacity>
+          ))}
+        </View>
+      )}
+
+      {suggestedGroups.length > 0 && (
+        <View style={styles.section}>
+          <Text style={styles.sectionTitle}>Suggested for You</Text>
+          {suggestedGroups.map((group) => (
+            <View key={group.id} style={styles.suggestedCard}>
+              <View style={styles.groupIcon}>
+                {group.avatar_url ? (
+                  <Image source={{ uri: group.avatar_url }} style={styles.groupImage} />
+                ) : (
+                  <MaterialCommunityIcons name="account-group" size={24} color="#6366f1" />
+                )}
+              </View>
+              <View style={styles.groupInfo}>
+                <Text style={styles.groupName}>{group.name}</Text>
+                <Text style={styles.groupSubject}>{group.subjects?.name || 'General'}</Text>
+              </View>
+              <TouchableOpacity style={styles.joinButton} onPress={() => joinGroup(group.id)}>
+                <Text style={styles.joinButtonText}>Join</Text>
+              </TouchableOpacity>
+            </View>
+          ))}
+        </View>
+      )}
+
+      {upcomingSessions.length > 0 && (
+        <View style={[styles.section, { marginBottom: 24 }]}>
+          <Text style={styles.sectionTitle}>Upcoming Sessions</Text>
+          {upcomingSessions.map((session) => (
+            <View key={session.id} style={styles.sessionCard}>
+              <View style={styles.sessionIconContainer}>
+                <MaterialCommunityIcons name="calendar-clock" size={24} color="#6366f1" />
+              </View>
+              <View style={styles.sessionInfo}>
+                <Text style={styles.sessionTitle}>{session.title}</Text>
+                <Text style={styles.sessionGroup}>{session.study_groups?.name}</Text>
+                <Text style={styles.sessionTime}>{formatDate(session.start_time)}</Text>
+              </View>
+            </View>
+          ))}
+        </View>
+      )}
+    </ScrollView>
+  );
+}
+
+const styles = StyleSheet.create({
+  container: { flex: 1, backgroundColor: '#f8fafc' },
+  headerCard: {
+    padding: 24,
+    paddingTop: 60,
+    paddingRight: 24,
+    borderBottomLeftRadius: 24,
+    borderBottomRightRadius: 24,
+  },
+  headerContent: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    marginBottom: 32,
+  },
+  greetingContainer: { flexShrink: 1, maxWidth: '70%' },
+  greeting: { fontSize: 28, fontWeight: 'bold', color: '#fff' },
+  headerSubtext: { fontSize: 14, color: '#e0e7ff', marginTop: 4 },
+  avatarContainer: {
+    width: 64,
+    height: 64,
+    borderRadius: 32,
+    backgroundColor: '#fff',
+    justifyContent: 'center',
+    alignItems: 'center',
+    marginLeft: 16,
+    elevation: 6,
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 3 },
+    shadowOpacity: 0.25,
+    shadowRadius: 5,
+    borderWidth: 2,
+    borderColor: '#ffffff80',
+  },
+  avatar: { width: 60, height: 60, borderRadius: 30 },
+  avatarPlaceholder: {
+    width: 60,
+    height: 60,
+    borderRadius: 30,
+    backgroundColor: '#f1f5f9',
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  statsContainer: {
+    flexDirection: 'row',
+    backgroundColor: 'rgba(255, 255, 255, 0.2)',
+    borderRadius: 16,
+    padding: 16,
+  },
+  statItem: { flex: 1, alignItems: 'center' },
+  statDivider: { width: 1, backgroundColor: 'rgba(255, 255, 255, 0.3)' },
+  statValue: { fontSize: 20, fontWeight: 'bold', color: '#fff', marginTop: 8 },
+  statLabel: { fontSize: 12, color: '#e0e7ff', marginTop: 4 },
+  section: { padding: 16 },
+  sectionHeader: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    marginBottom: 16,
+  },
+  sectionTitle: { fontSize: 20, fontWeight: 'bold', color: '#1e293b', marginBottom: 16 },
+  seeAll: { fontSize: 14, color: '#6366f1', fontWeight: '600' },
+  quickActions: { flexDirection: 'row', justifyContent: 'space-between' },
+  actionCard: {
+    flex: 1,
+    alignItems: 'center',
+    backgroundColor: '#fff',
+    borderRadius: 16,
+    padding: 16,
+    marginHorizontal: 4,
+    elevation: 2,
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.1,
+    shadowRadius: 4,
+  },
+  actionIconContainer: {
+    width: 56,
+    height: 56,
+    borderRadius: 28,
+    justifyContent: 'center',
+    alignItems: 'center',
+    marginBottom: 8,
+  },
+  actionText: { fontSize: 12, color: '#475569', fontWeight: '600', textAlign: 'center' },
+  groupCard: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: '#fff',
+    borderRadius: 12,
+    padding: 16,
+    marginBottom: 12,
+    elevation: 1,
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 1 },
+    shadowOpacity: 0.05,
+    shadowRadius: 2,
+  },
+  groupIcon: {
+    width: 48,
+    height: 48,
+    borderRadius: 24,
+    backgroundColor: '#f1f5f9',
+    justifyContent: 'center',
+    alignItems: 'center',
+    marginRight: 12,
+  },
+  groupImage: { width: 48, height: 48, borderRadius: 24 },
+  groupInfo: { flex: 1 },
+  groupName: { fontSize: 16, fontWeight: '600', color: '#1e293b' },
+  groupSubject: { fontSize: 14, color: '#64748b', marginTop: 2 },
+  suggestedCard: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: '#fff',
+    borderRadius: 12,
+    padding: 16,
+    marginBottom: 12,
+    borderWidth: 1,
+    borderColor: '#e2e8f0',
+  },
+  joinButton: {
+    backgroundColor: '#6366f1',
+    paddingHorizontal: 20,
+    paddingVertical: 8,
+    borderRadius: 8,
+  },
+  joinButtonText: { color: '#fff', fontWeight: '600', fontSize: 14 },
+  sessionCard: {
+    flexDirection: 'row',
+    backgroundColor: '#fff',
+    borderRadius: 12,
+    padding: 16,
+    marginBottom: 12,
+    elevation: 1,
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 1 },
+    shadowOpacity: 0.05,
+    shadowRadius: 2,
+  },
+  sessionIconContainer: {
+    width: 48,
+    height: 48,
+    borderRadius: 24,
+    backgroundColor: '#eef2ff',
+    justifyContent: 'center',
+    alignItems: 'center',
+    marginRight: 12,
+  },
+  sessionInfo: { flex: 1 },
+  sessionTitle: { fontSize: 16, fontWeight: '600', color: '#1e293b' },
+  sessionGroup: { fontSize: 14, color: '#6366f1', marginTop: 2 },
+  sessionTime: { fontSize: 12, color: '#64748b', marginTop: 4 },
+});
+```
+
+### FILE: src/screens/progress/ProgressScreen.js
+```javascript
+import React, { useState, useEffect, useRef } from 'react';
+import {
+  View,
+  Text,
+  ScrollView,
+  StyleSheet,
+  Dimensions,
+  TouchableOpacity,
+  Alert,
+} from 'react-native';
+import { LinearGradient } from 'expo-linear-gradient';
+import { LineChart, BarChart } from 'react-native-chart-kit';
+import { MaterialCommunityIcons } from '@expo/vector-icons';
+import { useAuth } from '../../contexts/AuthContext';
+import { supabase } from '../../config/supabase';
+import StudyTimerComponent from '../../components/StudyTimerComponent';
+import { useRefresh } from '../../contexts/RefreshContext';
+import { checkAndUnlockAchievements } from '../../helpers/checkAndUnlockAchievements';
+
+const screenWidth = Dimensions.get('window').width;
+
+const iconMap = {
+  first_quiz: 'trophy',
+  daily_streak: 'star',
+  brain_boost: 'brain',
+  study_clock: 'clock-outline',
+};
+
+const getValidIcon = (iconName) => {
+  if (!iconName || typeof iconName !== 'string') return 'trophy';
+  return iconMap[iconName] || iconName;
+};
+
+export default function ProgressScreen({ navigation }) {
+  const { refreshKey } = useRefresh();
+  const { user } = useAuth();
+  const [stats, setStats] = useState({
+    totalHours: 0,
+    weeklyHours: [],
+    quizzesCompleted: 0,
+    averageScore: 0,
+    achievements: [],
+    recentScores: [],
+  });
+
+  const timerRunningRef = useRef(false);
+
+  useEffect(() => {
+    navigation.setOptions({
+      headerRight: () => (
+        <TouchableOpacity
+          style={styles.headerButton}
+          onPress={() => navigation.navigate('Profile')}
+        >
+          <MaterialCommunityIcons name="account-circle" size={28} color="#fff" />
+        </TouchableOpacity>
+      ),
+    });
+  }, [navigation]);
+
+  useEffect(() => {
+    if (!timerRunningRef.current) {
+      fetchProgress();
+    }
+  }, [refreshKey]);
+
+  const calculateStats = (progressData, quizData, achievementsData) => {
+    const totalHours = (progressData || []).reduce(
+      (sum, p) => sum + parseFloat(p.study_hours || 0),
+      0
+    );
+    const last7Days = (progressData || []).slice(0, 7).reverse();
+    const weeklyHours = last7Days.map((p) => parseFloat(p.study_hours || 0));
+    const quizzesCompleted = (quizData || []).length;
+    const averageScore = quizData?.length
+      ? Math.round(
+          quizData.reduce(
+            (sum, q) => sum + ((q.score || 0) / (q.total_points || 1)) * 100,
+            0
+          ) / quizData.length
+        )
+      : 0;
+    const recentScores = (quizData || [])
+      .slice(0, 5)
+      .reverse()
+      .map((q) => Math.round(((q.score || 0) / (q.total_points || 1)) * 100));
+
+    return {
+      totalHours: Math.round(totalHours * 10) / 10,
+      weeklyHours,
+      quizzesCompleted,
+      averageScore,
+      achievements: achievementsData || [],
+      recentScores,
+    };
+  };
+
+  const fetchProgress = async () => {
+    try {
+      const { data: progressData } = await supabase
+        .from('study_progress')
+        .select('study_hours, logged_at')
+        .eq('user_id', user.id)
+        .order('logged_at', { ascending: false })
+        .limit(30);
+
+      const { data: quizData } = await supabase
+        .from('quiz_attempts')
+        .select('score, total_points, completed_at')
+        .eq('user_id', user.id)
+        .not('completed_at', 'is', null)
+        .order('completed_at', { ascending: false });
+
+      const newAchievements = await checkAndUnlockAchievements(user.id);
+
+      const { data: achievementsData } = await supabase
+        .from('user_achievements')
+        .select('*, achievements (name, description, icon)')
+        .eq('user_id', user.id)
+        .order('earned_at', { ascending: false });
+
+      const calculatedStats = calculateStats(progressData, quizData, achievementsData);
+      setStats(calculatedStats);
+
+      // Fixed: use Alert.alert instead of global alert()
+      if (newAchievements.length > 0) {
+        newAchievements.forEach((a) => {
+          Alert.alert('🎉 Achievement Unlocked!', a.name);
+        });
+      }
+    } catch (error) {
+      console.error('Error fetching progress:', error);
+    }
+  };
+
+  const handleTimerStart = () => {
+    timerRunningRef.current = true;
+  };
+
+  const handleTimerStop = () => {
+    timerRunningRef.current = false;
+    fetchProgress();
+  };
+
+  const chartConfig = {
+    backgroundColor: '#6366f1',
+    backgroundGradientFrom: '#6366f1',
+    backgroundGradientTo: '#8b5cf6',
+    decimalPlaces: 1,
+    color: (opacity = 1) => `rgba(255, 255, 255, ${opacity})`,
+    labelColor: (opacity = 1) => `rgba(255, 255, 255, ${opacity})`,
+    style: { borderRadius: 16 },
+    propsForDots: { r: '6', strokeWidth: '2', stroke: '#fff' },
+  };
+
+  return (
+    <ScrollView style={styles.container}>
+      <LinearGradient colors={['#6366f1', '#8b5cf6']} style={styles.header}>
+        <MaterialCommunityIcons name="chart-line" size={48} color="#fff" />
+        <Text style={styles.headerTitle}>Your Progress</Text>
+        <Text style={styles.headerSubtitle}>Keep up the great work!</Text>
+      </LinearGradient>
+
+      <StudyTimerComponent
+        groupId={null}
+        navigation={navigation}
+        onTimerStart={handleTimerStart}
+        onTimerStop={handleTimerStop}
+        onAchievementsUpdate={fetchProgress}
+      />
+
+      <View style={styles.statsContainer}>
+        <StatCard
+          icon="clock-outline"
+          iconBg="#dbeafe"
+          iconColor="#3b82f6"
+          value={`${stats.totalHours}h`}
+          label="Total Study Time"
+        />
+        <StatCard
+          icon="brain"
+          iconBg="#fef3c7"
+          iconColor="#f59e0b"
+          value={`${stats.quizzesCompleted}`}
+          label="Quizzes Done"
+        />
+        <StatCard
+          icon="percent"
+          iconBg="#dcfce7"
+          iconColor="#22c55e"
+          value={`${stats.averageScore}%`}
+          label="Avg Score"
+        />
+      </View>
+
+      {stats.weeklyHours.length > 0 && (
+        <View style={styles.chartContainer}>
+          <Text style={styles.chartTitle}>Weekly Study Hours</Text>
+          <BarChart
+            data={{
+              labels: ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'].slice(
+                0,
+                stats.weeklyHours.length
+              ),
+              datasets: [{ data: stats.weeklyHours.length > 0 ? stats.weeklyHours : [0] }],
+            }}
+            width={screenWidth - 32}
+            height={220}
+            chartConfig={chartConfig}
+            style={styles.chart}
+            fromZero
+          />
+        </View>
+      )}
+
+      {stats.recentScores.length > 0 && (
+        <View style={styles.chartContainer}>
+          <Text style={styles.chartTitle}>Recent Quiz Scores</Text>
+          <LineChart
+            data={{
+              labels: stats.recentScores.map((_, i) => `Q${i + 1}`),
+              datasets: [{ data: stats.recentScores.length > 0 ? stats.recentScores : [0] }],
+            }}
+            width={screenWidth - 32}
+            height={220}
+            chartConfig={chartConfig}
+            bezier
+            style={styles.chart}
+          />
+        </View>
+      )}
+
+      <View style={styles.section}>
+        <Text style={styles.sectionTitle}>Achievements ({stats.achievements.length})</Text>
+        {stats.achievements.length > 0
+          ? stats.achievements.map((a) => <AchievementCard key={a.id} achievement={a} />)
+          : <EmptyAchievements />}
+      </View>
+
+      <View style={styles.motivationCard}>
+        <MaterialCommunityIcons name="star" size={24} color="#f59e0b" />
+        <Text style={styles.motivationText}>
+          You're doing great! Keep studying and learning together.
+        </Text>
+      </View>
+    </ScrollView>
+  );
+}
+
+const StatCard = ({ icon, iconBg, iconColor, value, label }) => (
+  <View style={styles.statCard}>
+    <View style={[styles.statIcon, { backgroundColor: iconBg }]}>
+      <MaterialCommunityIcons name={icon} size={32} color={iconColor} />
+    </View>
+    <Text style={styles.statValue}>{value}</Text>
+    <Text style={styles.statLabel}>{label}</Text>
+  </View>
+);
+
+const AchievementCard = ({ achievement }) => {
+  const iconName = getValidIcon(achievement.achievements?.icon);
+  return (
+    <View style={styles.achievementCard}>
+      <View style={styles.achievementIcon}>
+        <MaterialCommunityIcons name={iconName} size={32} color="#f59e0b" />
+      </View>
+      <View style={styles.achievementInfo}>
+        <Text style={styles.achievementName}>{achievement.achievements?.name}</Text>
+        <Text style={styles.achievementDescription}>{achievement.achievements?.description}</Text>
+        <Text style={styles.achievementDate}>
+          Earned {new Date(achievement.earned_at).toLocaleDateString()}
+        </Text>
+      </View>
+    </View>
+  );
+};
+
+const EmptyAchievements = () => (
+  <View style={styles.emptyState}>
+    <MaterialCommunityIcons name="trophy-outline" size={48} color="#cbd5e1" />
+    <Text style={styles.emptyStateText}>No achievements yet</Text>
+    <Text style={styles.emptyStateSubtext}>Keep studying to unlock badges!</Text>
+  </View>
+);
+
+const styles = StyleSheet.create({
+  container: { flex: 1, backgroundColor: '#f8fafc' },
+  headerButton: { padding: 8, marginRight: 8 },
+  header: {
+    padding: 32,
+    alignItems: 'center',
+    borderBottomLeftRadius: 24,
+    borderBottomRightRadius: 24,
+    marginBottom: 16,
+  },
+  headerTitle: { fontSize: 28, fontWeight: 'bold', color: '#fff', marginTop: 12 },
+  headerSubtitle: { fontSize: 14, color: '#e0e7ff', marginTop: 4 },
+  statsContainer: { flexDirection: 'row', paddingHorizontal: 16, marginBottom: 24, gap: 12 },
+  statCard: {
+    flex: 1,
+    backgroundColor: '#fff',
+    borderRadius: 16,
+    padding: 16,
+    alignItems: 'center',
+    elevation: 2,
+  },
+  statIcon: {
+    width: 56,
+    height: 56,
+    borderRadius: 28,
+    justifyContent: 'center',
+    alignItems: 'center',
+    marginBottom: 12,
+  },
+  statValue: { fontSize: 24, fontWeight: 'bold', color: '#1e293b', marginBottom: 4 },
+  statLabel: { fontSize: 12, color: '#64748b', textAlign: 'center' },
+  chartContainer: { paddingHorizontal: 16, marginBottom: 24 },
+  chartTitle: { fontSize: 18, fontWeight: 'bold', color: '#1e293b', marginBottom: 12 },
+  chart: { borderRadius: 16 },
+  section: { padding: 16 },
+  sectionTitle: { fontSize: 20, fontWeight: 'bold', color: '#1e293b', marginBottom: 16 },
+  achievementCard: {
+    flexDirection: 'row',
+    backgroundColor: '#fff',
+    borderRadius: 12,
+    padding: 16,
+    marginBottom: 12,
+    elevation: 1,
+  },
+  achievementIcon: {
+    width: 56,
+    height: 56,
+    borderRadius: 28,
+    backgroundColor: '#fef3c7',
+    justifyContent: 'center',
+    alignItems: 'center',
+    marginRight: 12,
+  },
+  achievementInfo: { flex: 1 },
+  achievementName: { fontSize: 16, fontWeight: 'bold', color: '#1e293b', marginBottom: 4 },
+  achievementDescription: { fontSize: 14, color: '#64748b', marginBottom: 4 },
+  achievementDate: { fontSize: 12, color: '#94a3b8' },
+  emptyState: { alignItems: 'center', paddingVertical: 48 },
+  emptyStateText: { fontSize: 16, fontWeight: '600', color: '#64748b', marginTop: 12 },
+  emptyStateSubtext: { fontSize: 14, color: '#94a3b8', marginTop: 4 },
+  motivationCard: {
+    flexDirection: 'row',
+    backgroundColor: '#fffbeb',
+    borderRadius: 12,
+    padding: 16,
+    margin: 16,
+    marginTop: 8,
+    alignItems: 'center',
+  },
+  motivationText: { flex: 1, fontSize: 14, color: '#92400e', marginLeft: 12, lineHeight: 20 },
+});
+```
+
+### FILE: src/screens/quizzes/TakeQuizScreen.js
+```javascript
+import React, { useState, useEffect, useRef } from 'react';
+import {
+  View,
+  Text,
+  TouchableOpacity,
+  StyleSheet,
+  Alert,
+  ScrollView,
+} from 'react-native';
+import { LinearGradient } from 'expo-linear-gradient';
+import { MaterialCommunityIcons } from '@expo/vector-icons';
+import { useAuth } from '../../contexts/AuthContext';
+import { supabase } from '../../config/supabase';
+
+export default function TakeQuizScreen({ route, navigation }) {
+  const { quizId } = route.params;
+  const { user } = useAuth();
+  const [quiz, setQuiz] = useState(null);
+  const [questions, setQuestions] = useState([]);
+  const [currentQuestionIndex, setCurrentQuestionIndex] = useState(0);
+  const [answers, setAnswers] = useState({});
+  const [timeLeft, setTimeLeft] = useState(null);
+  const [loading, setLoading] = useState(true);
+
+  // Use ref to avoid stale closure in timer callback
+  const answersRef = useRef({});
+  const questionsRef = useRef([]);
+  const submitCalledRef = useRef(false);
+
+  useEffect(() => {
+    fetchQuiz();
+  }, []);
+
+  useEffect(() => {
+    answersRef.current = answers;
+  }, [answers]);
+
+  useEffect(() => {
+    questionsRef.current = questions;
+  }, [questions]);
+
+  useEffect(() => {
+    if (quiz?.time_limit && timeLeft === null) {
+      setTimeLeft(quiz.time_limit * 60);
+    }
+  }, [quiz]);
+
+  useEffect(() => {
+    if (timeLeft === null || timeLeft <= 0) return;
+
+    const timer = setInterval(() => {
+      setTimeLeft((prev) => {
+        if (prev <= 1) {
+          clearInterval(timer);
+          // Call via ref to avoid stale closure
+          if (!submitCalledRef.current) {
+            submitCalledRef.current = true;
+            saveQuizAttempt(true);
+          }
+          return 0;
+        }
+        return prev - 1;
+      });
+    }, 1000);
+
+    return () => clearInterval(timer);
+  }, [timeLeft === null ? null : 'running']);
+
+  const fetchQuiz = async () => {
+    try {
+      const { data: quizData } = await supabase
+        .from('quizzes')
+        .select('*')
+        .eq('id', quizId)
+        .single();
+
+      setQuiz(quizData);
+
+      const { data: questionsData } = await supabase
+        .from('quiz_questions')
+        .select('*')
+        .eq('quiz_id', quizId)
+        .order('order_index', { ascending: true });
+
+      setQuestions(questionsData || []);
+      questionsRef.current = questionsData || [];
+      setLoading(false);
+    } catch (error) {
+      console.error('Error fetching quiz:', error);
+      Alert.alert('Error', 'Failed to load quiz');
+      navigation.goBack();
+    }
+  };
+
+  const selectAnswer = (questionId, answerIndex) => {
+    setAnswers((prev) => ({ ...prev, [questionId]: answerIndex }));
+  };
+
+  const calculateScore = (currentAnswers, currentQuestions) => {
+    let score = 0;
+    let totalPoints = 0;
+    currentQuestions.forEach((question) => {
+      totalPoints += question.points || 10;
+      if (currentAnswers[question.id] === question.correct_answer) {
+        score += question.points || 10;
+      }
+    });
+    return { score, totalPoints };
+  };
+
+  const submitQuiz = () => {
+    const answeredCount = Object.keys(answersRef.current).length;
+    if (answeredCount < questionsRef.current.length) {
+      Alert.alert(
+        'Incomplete Quiz',
+        `You have answered ${answeredCount} out of ${questionsRef.current.length} questions. Submit anyway?`,
+        [
+          { text: 'Cancel', style: 'cancel' },
+          {
+            text: 'Submit',
+            onPress: () => {
+              submitCalledRef.current = true;
+              saveQuizAttempt(false);
+            },
+          },
+        ]
+      );
+      return;
+    }
+    submitCalledRef.current = true;
+    saveQuizAttempt(false);
+  };
+
+  const saveQuizAttempt = async (isAutoSubmit) => {
+    try {
+      const currentAnswers = answersRef.current;
+      const currentQuestions = questionsRef.current;
+      const { score, totalPoints } = calculateScore(currentAnswers, currentQuestions);
+
+      const { data: attemptData, error: attemptError } = await supabase
+        .from('quiz_attempts')
+        .insert({
+          quiz_id: quizId,
+          user_id: user.id,
+          score,
+          total_points: totalPoints,
+          completed_at: new Date().toISOString(),
+        })
+        .select()
+        .single();
+
+      if (attemptError) throw attemptError;
+
+      const answerRecords = currentQuestions.map((question) => ({
+        attempt_id: attemptData.id,
+        question_id: question.id,
+        selected_answer: currentAnswers[question.id] ?? null,
+        is_correct: currentAnswers[question.id] === question.correct_answer,
+      }));
+
+      const { error: answersError } = await supabase
+        .from('quiz_answers')
+        .insert(answerRecords);
+
+      if (answersError) throw answersError;
+
+      const percentage = Math.round((score / totalPoints) * 100);
+      Alert.alert(
+        isAutoSubmit ? 'Time Up!' : 'Quiz Completed!',
+        `You scored ${score} out of ${totalPoints} points (${percentage}%)`,
+        [
+          {
+            text: 'View Results',
+            onPress: () => {
+              navigation.replace('QuizDetail', { quizId, attemptId: attemptData.id });
+            },
+          },
+        ]
+      );
+    } catch (error) {
+      console.error('Error submitting quiz:', error);
+      Alert.alert('Error', 'Failed to submit quiz. Please try again.');
+    }
+  };
+
+  const formatTime = (seconds) => {
+    const mins = Math.floor(seconds / 60);
+    const secs = seconds % 60;
+    return `${mins}:${secs.toString().padStart(2, '0')}`;
+  };
+
+  if (loading) {
+    return (
+      <View style={styles.loadingContainer}>
+        <Text>Loading quiz...</Text>
+      </View>
+    );
+  }
+
+  const currentQuestion = questions[currentQuestionIndex];
+  const progress = ((currentQuestionIndex + 1) / questions.length) * 100;
+
+  return (
+    <View style={styles.container}>
+      <LinearGradient colors={['#6366f1', '#8b5cf6']} style={styles.header}>
+        <View style={styles.headerContent}>
+          <View>
+            <Text style={styles.questionCounter}>
+              Question {currentQuestionIndex + 1} of {questions.length}
+            </Text>
+            {timeLeft !== null && (
+              <View style={styles.timerContainer}>
+                <MaterialCommunityIcons name="clock-outline" size={16} color="#fff" />
+                <Text style={[styles.timerText, timeLeft < 60 && styles.timerWarning]}>
+                  {formatTime(timeLeft)}
+                </Text>
+              </View>
+            )}
+          </View>
+          <Text style={styles.pointsText}>{currentQuestion?.points || 10} pts</Text>
+        </View>
+        <View style={styles.progressBar}>
+          <View style={[styles.progressFill, { width: `${progress}%` }]} />
+        </View>
+      </LinearGradient>
+
+      <ScrollView style={styles.content}>
+        <View style={styles.questionContainer}>
+          <Text style={styles.questionText}>{currentQuestion?.question}</Text>
+        </View>
+        <View style={styles.optionsContainer}>
+          {currentQuestion?.options?.map((option, index) => {
+            const isSelected = answers[currentQuestion.id] === index;
+            return (
+              <TouchableOpacity
+                key={index}
+                style={[styles.optionButton, isSelected && styles.optionSelected]}
+                onPress={() => selectAnswer(currentQuestion.id, index)}
+              >
+                <View style={[styles.optionIndicator, isSelected && styles.indicatorSelected]}>
+                  {isSelected && <View style={styles.indicatorDot} />}
+                </View>
+                <Text style={[styles.optionText, isSelected && styles.optionTextSelected]}>
+                  {option}
+                </Text>
+              </TouchableOpacity>
+            );
+          })}
+        </View>
+      </ScrollView>
+
+      <View style={styles.footer}>
+        <TouchableOpacity
+          style={[styles.navButton, currentQuestionIndex === 0 && styles.navButtonDisabled]}
+          onPress={() => setCurrentQuestionIndex(currentQuestionIndex - 1)}
+          disabled={currentQuestionIndex === 0}
+        >
+          <MaterialCommunityIcons
+            name="chevron-left"
+            size={24}
+            color={currentQuestionIndex === 0 ? '#cbd5e1' : '#6366f1'}
+          />
+          <Text
+            style={[
+              styles.navButtonText,
+              currentQuestionIndex === 0 && styles.navButtonTextDisabled,
+            ]}
+          >
+            Previous
+          </Text>
+        </TouchableOpacity>
+
+        {currentQuestionIndex === questions.length - 1 ? (
+          <TouchableOpacity style={styles.submitButton} onPress={submitQuiz}>
+            <LinearGradient colors={['#22c55e', '#16a34a']} style={styles.submitButtonGradient}>
+              <Text style={styles.submitButtonText}>Submit Quiz</Text>
+            </LinearGradient>
+          </TouchableOpacity>
+        ) : (
+          <TouchableOpacity
+            style={styles.navButton}
+            onPress={() => setCurrentQuestionIndex(currentQuestionIndex + 1)}
+          >
+            <Text style={styles.navButtonText}>Next</Text>
+            <MaterialCommunityIcons name="chevron-right" size={24} color="#6366f1" />
+          </TouchableOpacity>
+        )}
+      </View>
+    </View>
+  );
+}
+
+const styles = StyleSheet.create({
+  container: { flex: 1, backgroundColor: '#f8fafc' },
+  loadingContainer: { flex: 1, justifyContent: 'center', alignItems: 'center' },
+  header: { padding: 20, paddingTop: 16 },
+  headerContent: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'flex-start',
+    marginBottom: 12,
+  },
+  questionCounter: { fontSize: 14, color: '#e0e7ff', marginBottom: 4 },
+  timerContainer: { flexDirection: 'row', alignItems: 'center', gap: 4 },
+  timerText: { fontSize: 16, fontWeight: 'bold', color: '#fff' },
+  timerWarning: { color: '#fca5a5' },
+  pointsText: { fontSize: 14, fontWeight: '600', color: '#fff' },
+  progressBar: {
+    height: 4,
+    backgroundColor: 'rgba(255, 255, 255, 0.2)',
+    borderRadius: 2,
+    overflow: 'hidden',
+  },
+  progressFill: { height: '100%', backgroundColor: '#fff' },
+  content: { flex: 1, padding: 20 },
+  questionContainer: {
+    backgroundColor: '#fff',
+    borderRadius: 16,
+    padding: 24,
+    marginBottom: 24,
+    elevation: 2,
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.1,
+    shadowRadius: 4,
+  },
+  questionText: { fontSize: 18, color: '#1e293b', lineHeight: 28, fontWeight: '500' },
+  optionsContainer: { gap: 12 },
+  optionButton: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: '#fff',
+    borderRadius: 12,
+    padding: 16,
+    borderWidth: 2,
+    borderColor: '#e2e8f0',
+  },
+  optionSelected: { borderColor: '#6366f1', backgroundColor: '#eef2ff' },
+  optionIndicator: {
+    width: 24,
+    height: 24,
+    borderRadius: 12,
+    borderWidth: 2,
+    borderColor: '#cbd5e1',
+    marginRight: 12,
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  indicatorSelected: { borderColor: '#6366f1' },
+  indicatorDot: { width: 12, height: 12, borderRadius: 6, backgroundColor: '#6366f1' },
+  optionText: { flex: 1, fontSize: 16, color: '#475569' },
+  optionTextSelected: { color: '#1e293b', fontWeight: '500' },
+  footer: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    padding: 20,
+    backgroundColor: '#fff',
+    borderTopWidth: 1,
+    borderTopColor: '#e2e8f0',
+  },
+  navButton: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingVertical: 12,
+    paddingHorizontal: 20,
+    gap: 4,
+  },
+  navButtonDisabled: { opacity: 0.4 },
+  navButtonText: { fontSize: 16, fontWeight: '600', color: '#6366f1' },
+  navButtonTextDisabled: { color: '#cbd5e1' },
+  submitButton: { borderRadius: 12, overflow: 'hidden' },
+  submitButtonGradient: { paddingVertical: 12, paddingHorizontal: 32 },
+  submitButtonText: { fontSize: 16, fontWeight: 'bold', color: '#fff' },
+});
+```
+
+### FILE: src/screens/groups/GroupChatScreen.js (MemoryCardsGame fix only — excerpt is the fixed component)
+
+Only the `MemoryCardsGame` and `finishGame` logic changed. The rest of the file is identical to the original. Replace only these functions inside `GroupChatScreen.js`:
+
+```javascript
+// Fixed MemoryCardsGame — replace the entire component
+function MemoryCardsGame({ onClose, groupId, userId }) {
+  const [cards, setCards] = useState([]);
+  const [flipped, setFlipped] = useState([]);
+  const [matched, setMatched] = useState([]);
+  const [moves, setMoves] = useState(0);
+  const [score, setScore] = useState(1000);
+  const [gameFinished, setGameFinished] = useState(false);
+
+  // Use state instead of ref to track matched count correctly
+  const [matchedCount, setMatchedCount] = useState(0);
+
+  useEffect(() => {
+    initializeGame();
+  }, []);
+
+  const initializeGame = () => {
+    const symbols = ['🍎', '🍊', '🍋', '🍌', '🍉', '🍇', '🍓', '🍒'];
+    const deck = [...symbols, ...symbols]
+      .sort(() => Math.random() - 0.5)
+      .map((symbol, index) => ({ id: index, symbol }));
+    setCards(deck);
+    setMatchedCount(0);
+    setGameFinished(false);
+  };
+
+  const finishGame = async (finalScore) => {
+    if (gameFinished) return; // Prevent double submission
+    setGameFinished(true);
+
+    const { error } = await supabase.from('game_scores').insert({
+      user_id: userId,
+      group_id: groupId,
+      game_type: 'memory',
+      score: finalScore,
+      mode: 'solo',
+    });
+    if (error) {
+      console.error('Error submitting memory score:', error);
+    }
+    Alert.alert('Complete!', `Score: ${finalScore}`, [
+      { text: 'OK', onPress: onClose },
+    ]);
+  };
+
+  const flipCard = (id) => {
+    if (flipped.length === 2 || flipped.includes(id) || matched.includes(id)) return;
+
+    const newFlipped = [...flipped, id];
+    setFlipped(newFlipped);
+
+    if (newFlipped.length === 2) {
+      const newMoves = moves + 1;
+      const newScore = Math.max(0, score - 50);
+      setMoves(newMoves);
+      setScore(newScore);
+      checkMatch(newFlipped, newScore);
+    }
+  };
+
+  const checkMatch = (flippedIds, currentScore) => {
+    const [firstId, secondId] = flippedIds;
+    const firstCard = cards.find((c) => c.id === firstId);
+    const secondCard = cards.find((c) => c.id === secondId);
+
+    if (firstCard.symbol === secondCard.symbol) {
+      const newMatched = [...matched, firstId, secondId];
+      setMatched(newMatched);
+      setFlipped([]);
+
+      const newMatchedCount = matchedCount + 2;
+      setMatchedCount(newMatchedCount);
+
+      if (newMatchedCount === cards.length) {
+        finishGame(currentScore);
+      }
+    } else {
+      setTimeout(() => setFlipped([]), 1000);
+    }
+  };
+
+  return (
+    <View style={styles.gameModal}>
+      <Text style={styles.gameTitle}>Memory Cards</Text>
+      <Text style={styles.scoreDisplay}>Score: {score}</Text>
+      <Text style={styles.movesDisplay}>Moves: {moves}</Text>
+      <View style={styles.memoryGrid}>
+        {cards.map((card) => {
+          const isFlipped = flipped.includes(card.id) || matched.includes(card.id);
+          return (
+            <TouchableOpacity
+              key={card.id}
+              style={[styles.memoryCard, isFlipped && styles.memoryCardFlipped]}
+              onPress={() => flipCard(card.id)}
+            >
+              <Text style={styles.memoryCardText}>{isFlipped ? card.symbol : '?'}</Text>
+            </TouchableOpacity>
+          );
+        })}
+      </View>
+      <TouchableOpacity style={styles.closeBtn} onPress={onClose}>
+        <Text style={styles.closeText}>Close</Text>
+      </TouchableOpacity>
+    </View>
+  );
+}
+```
+
+### FILE: src/helpers/pushNotificationHelper.js
+```javascript
+import * as Notifications from 'expo-notifications';
+import * as Device from 'expo-device';
+import { Platform } from 'react-native';
+import { supabase } from '../config/supabase';
+import Constants from 'expo-constants';
+
+Notifications.setNotificationHandler({
+  handleNotification: async () => ({
+    shouldShowAlert: true,
+    shouldPlaySound: true,
+    shouldSetBadge: true,
+  }),
+});
+
+export async function registerForPushNotificationsAsync() {
+  let token;
+
+  if (Platform.OS === 'android') {
+    await Notifications.setNotificationChannelAsync('default', {
+      name: 'default',
+      importance: Notifications.AndroidImportance.MAX,
+      vibrationPattern: [0, 250, 250, 250],
+      lightColor: '#FF231F7C',
+    });
+  }
+
+  if (Device.isDevice) {
+    const { status: existingStatus } = await Notifications.getPermissionsAsync();
+    let finalStatus = existingStatus;
+
+    if (existingStatus !== 'granted') {
+      const { status } = await Notifications.requestPermissionsAsync();
+      finalStatus = status;
+    }
+
+    if (finalStatus !== 'granted') {
+      console.log('Push notification permission not granted.');
+      return null;
+    }
+
+    // Fixed: pass projectId required for production EAS builds
+    const projectId = Constants.expoConfig?.extra?.eas?.projectId;
+    if (!projectId) {
+      console.warn('No EAS projectId found in app config. Push token may not work in production.');
+    }
+
+    token = (
+      await Notifications.getExpoPushTokenAsync({
+        projectId,
+      })
+    ).data;
+
+    console.log('Push token:', token);
+  } else {
+    console.log('Must use physical device for push notifications.');
+  }
+
+  return token;
+}
+
+export async function savePushTokenToProfile(userId, pushToken) {
+  try {
+    const { error } = await supabase
+      .from('profiles')
+      .update({ push_token: pushToken })
+      .eq('id', userId);
+
+    if (error) throw error;
+    console.log('Push token saved successfully');
+  } catch (error) {
+    console.error('Error saving push token:', error);
+  }
+}
+
+export async function scheduleLocalNotification({ title, body, data = {} }) {
+  try {
+    await Notifications.scheduleNotificationAsync({
+      content: {
+        title,
+        body,
+        data,
+        sound: true,
+        priority: Notifications.AndroidNotificationPriority.HIGH,
+      },
+      trigger: null,
+    });
+  } catch (error) {
+    console.error('Error scheduling local notification:', error);
+  }
+}
+
+export function setupNotificationListeners(onDataReceived) {
+  const foregroundSubscription = Notifications.addNotificationReceivedListener(
+    (notification) => {
+      const { data } = notification.request.content;
+      if (onDataReceived && data) {
+        onDataReceived(data);
+      }
+    }
+  );
+
+  const responseSubscription = Notifications.addNotificationResponseReceivedListener(
+    (response) => {
+      const { data } = response.notification.request.content;
+      if (onDataReceived && data) {
+        onDataReceived(data);
+      }
+    }
+  );
+
+  return () => {
+    foregroundSubscription.remove();
+    responseSubscription.remove();
+  };
+}
+
+export async function triggerEventNotification(eventType, eventData) {
+  try {
+    let title, body;
+    switch (eventType) {
+      case 'session_created':
+        title = 'New Study Session';
+        body = `${eventData.title} scheduled`;
+        break;
+      case 'session_updated':
+        title = 'Session Updated';
+        body = `${eventData.title} has been updated`;
+        break;
+      case 'group_member_added':
+        title = 'New Group Member';
+        body = `${eventData.memberName} joined ${eventData.groupName}`;
+        break;
+      case 'calendar_update':
+        title = 'Calendar Updated';
+        body = 'Your calendar has new changes';
+        break;
+      default:
+        title = 'Update';
+        body = 'New activity in StudyBuddy';
+    }
+    await scheduleLocalNotification({ title, body, data: { eventType, ...eventData } });
+  } catch (error) {
+    console.error('Error triggering event notification:', error);
+  }
+}
+
+export async function clearAllNotifications() {
+  await Notifications.dismissAllNotificationsAsync();
+}
+
+export async function getNotificationPermissions() {
+  const { status } = await Notifications.getPermissionsAsync();
+  return status;
+}
+```
+
+### FILE: src/screens/legal/PrivacyPolicyScreen.js
+```javascript
+import React from 'react';
+import { ScrollView, Text, StyleSheet, View } from 'react-native';
+
+export default function PrivacyPolicyScreen() {
+  return (
+    <ScrollView style={styles.container} contentContainerStyle={styles.content}>
+      <Text style={styles.title}>Privacy Policy</Text>
+      <Text style={styles.updated}>Last updated: June 2025</Text>
+
+      <Text style={styles.heading}>1. Information We Collect</Text>
+      <Text style={styles.body}>
+        StudyBuddy collects the following information when you use our app:{'\n\n'}
+        • <Text style={styles.bold}>Account information:</Text> email address, full name, and
+        password (stored securely via Supabase Auth).{'\n'}
+        • <Text style={styles.bold}>Profile information:</Text> school, major, year level, bio,
+        subjects, and availability slots that you voluntarily provide.{'\n'}
+        • <Text style={styles.bold}>Usage data:</Text> study sessions, quiz results, group
+        memberships, and messages sent within group chats.{'\n'}
+        • <Text style={styles.bold}>Device data:</Text> push notification token for delivering
+        in-app notifications.
+      </Text>
+
+      <Text style={styles.heading}>2. How We Use Your Information</Text>
+      <Text style={styles.body}>
+        We use your information to:{'\n\n'}
+        • Provide and improve the StudyBuddy service.{'\n'}
+        • Match you with relevant study groups based on subjects and availability.{'\n'}
+        • Send notifications about study sessions, group activity, and achievements.{'\n'}
+        • Display leaderboards and progress statistics within your groups.
+      </Text>
+
+      <Text style={styles.heading}>3. Data Sharing</Text>
+      <Text style={styles.body}>
+        We do not sell your personal data. Your profile information (name, subjects) is visible
+        to members of groups you join. Your email address is never shared with other users.
+        We use Supabase (supabase.io) as our backend provider. Please refer to Supabase's
+        privacy policy for their data handling practices.
+      </Text>
+
+      <Text style={styles.heading}>4. Data Retention</Text>
+      <Text style={styles.body}>
+        Your data is retained for as long as your account is active. You may request deletion
+        of your account and associated data by contacting us at the email below.
+      </Text>
+
+      <Text style={styles.heading}>5. Security</Text>
+      <Text style={styles.body}>
+        We use industry-standard security measures including encrypted storage (Expo SecureStore)
+        for authentication tokens and HTTPS for all network communications.
+      </Text>
+
+      <Text style={styles.heading}>6. Children's Privacy</Text>
+      <Text style={styles.body}>
+        StudyBuddy is not directed to children under the age of 13. We do not knowingly collect
+        personal information from children under 13.
+      </Text>
+
+      <Text style={styles.heading}>7. Changes to This Policy</Text>
+      <Text style={styles.body}>
+        We may update this Privacy Policy from time to time. We will notify you of significant
+        changes via in-app notification or email.
+      </Text>
+
+      <Text style={styles.heading}>8. Contact Us</Text>
+      <Text style={styles.body}>
+        If you have questions about this Privacy Policy, please contact us at:{'\n'}
+        support@studybuddy.app
+      </Text>
+
+      <View style={styles.footer} />
+    </ScrollView>
+  );
+}
+
+const styles = StyleSheet.create({
+  container: { flex: 1, backgroundColor: '#f8fafc' },
+  content: { padding: 24 },
+  title: { fontSize: 26, fontWeight: 'bold', color: '#1e293b', marginBottom: 4 },
+  updated: { fontSize: 13, color: '#94a3b8', marginBottom: 24 },
+  heading: { fontSize: 17, fontWeight: '700', color: '#1e293b', marginTop: 20, marginBottom: 8 },
+  body: { fontSize: 15, color: '#475569', lineHeight: 24 },
+  bold: { fontWeight: '700' },
+  footer: { height: 40 },
+});
+```
+
+### FILE: App.js
+```javascript
+import React, { useState, useEffect, useCallback } from 'react';
+import { View, ActivityIndicator, Text } from 'react-native';
+import { NavigationContainer } from '@react-navigation/native';
+import { createNativeStackNavigator } from '@react-navigation/native-stack';
+import { createBottomTabNavigator } from '@react-navigation/bottom-tabs';
+import { PaperProvider } from 'react-native-paper';
+import { StatusBar } from 'expo-status-bar';
+import { AuthProvider, useAuth } from './src/contexts/AuthContext';
+import { MaterialCommunityIcons } from '@expo/vector-icons';
+import { RefreshProvider, useRefresh } from './src/contexts/RefreshContext';
+import { NotificationProvider } from './src/contexts/NotificationContext';
+import NotificationBell from './src/components/NotificationBell';
+import { supabase } from './src/config/supabase';
+
+// Screens
+import LoginScreen from './src/screens/auth/LoginScreen';
+import RegisterScreen from './src/screens/auth/RegisterScreen';
+import ProfileSetupScreen from './src/screens/profile/ProfileSetupScreen';
+import HomeScreen from './src/screens/home/HomeScreen';
+import GroupsScreen from './src/screens/groups/GroupsScreen';
+import GroupDetailScreen from './src/screens/groups/GroupDetailScreen';
+import GroupChatScreen from './src/screens/groups/GroupChatScreen';
+import CreateGroupScreen from './src/screens/groups/CreateGroupScreen';
+import CalendarScreen from './src/screens/calendar/CalendarScreen';
+import QuizzesScreen from './src/screens/quizzes/QuizzesScreen';
+import QuizDetailScreen from './src/screens/quizzes/QuizDetailScreen';
+import TakeQuizScreen from './src/screens/quizzes/TakeQuizScreen';
+import CreateQuizScreen from './src/screens/quizzes/CreateQuizScreen';
+import ProgressScreen from './src/screens/progress/ProgressScreen';
+import ProfileScreen from './src/screens/profile/ProfileScreen';
+import EditProfileScreen from './src/screens/profile/EditProfileScreen';
+import LogStudyHoursScreen from './src/screens/progress/LogStudyHoursScreen';
+import LeaderboardScreen from './src/screens/gamification/LeaderboardScreen';
+import NotificationsScreen from './src/screens/notifications/NotificationsScreen';
+import PrivacyPolicyScreen from './src/screens/legal/PrivacyPolicyScreen';
+
+const Stack = createNativeStackNavigator();
+const Tab = createBottomTabNavigator();
+
+const theme = {
+  colors: {
+    primary: '#6366f1',
+    secondary: '#22c55e',
+    background: '#f8fafc',
+    surface: '#ffffff',
+    error: '#ef4444',
+    text: '#1e293b',
+    textSecondary: '#64748b',
+  },
+};
+
+function TabNavigator() {
+  const { triggerRefresh } = useRefresh();
+
+  return (
+    <Tab.Navigator
+      initialRouteName="Home"
+      screenOptions={({ route }) => ({
+        headerRight: () => <NotificationBell />,
+        tabBarIcon: ({ focused, color, size }) => {
+          let iconName;
+          switch (route.name) {
+            case 'Home':
+              iconName = focused ? 'home' : 'home-outline';
+              break;
+            case 'Groups':
+              iconName = focused ? 'account-group' : 'account-group-outline';
+              break;
+            case 'Calendar':
+              iconName = focused ? 'calendar' : 'calendar-outline';
+              break;
+            case 'Quizzes':
+              iconName = focused ? 'file-document-edit' : 'file-document-edit-outline';
+              break;
+            case 'Progress':
+              iconName = focused ? 'chart-line' : 'chart-line-variant';
+              break;
+          }
+          return <MaterialCommunityIcons name={iconName} size={size} color={color} />;
+        },
+        tabBarActiveTintColor: theme.colors.primary,
+        tabBarInactiveTintColor: theme.colors.textSecondary,
+        tabBarStyle: {
+          backgroundColor: theme.colors.surface,
+          borderTopWidth: 1,
+          borderTopColor: '#e2e8f0',
+          paddingBottom: 5,
+          height: 60,
+        },
+        headerStyle: { backgroundColor: theme.colors.primary },
+        headerTintColor: '#fff',
+        headerTitleStyle: { fontWeight: 'bold' },
+      })}
+      screenListeners={{ tabPress: () => { triggerRefresh(); } }}
+    >
+      <Tab.Screen name="Home" component={HomeScreen} />
+      <Tab.Screen name="Groups" component={GroupsScreen} />
+      <Tab.Screen name="Calendar" component={CalendarScreen} />
+      <Tab.Screen name="Quizzes" component={QuizzesScreen} />
+      <Tab.Screen name="Progress" component={ProgressScreen} />
+    </Tab.Navigator>
+  );
+}
+
+function AuthStack() {
+  return (
+    <Stack.Navigator screenOptions={{ headerShown: false }}>
+      <Stack.Screen name="Login" component={LoginScreen} />
+      <Stack.Screen name="Register" component={RegisterScreen} />
+      <Stack.Screen
+        name="PrivacyPolicy"
+        component={PrivacyPolicyScreen}
+        options={{
+          headerShown: true,
+          title: 'Privacy Policy',
+          headerStyle: { backgroundColor: theme.colors.primary },
+          headerTintColor: '#fff',
+        }}
+      />
+    </Stack.Navigator>
+  );
+}
+
+function SetupStack({ onProfileComplete }) {
+  return (
+    <Stack.Navigator>
+      <Stack.Screen
+        name="ProfileSetup"
+        options={{
+          title: 'Complete Your Profile',
+          headerStyle: { backgroundColor: theme.colors.primary },
+          headerTintColor: '#fff',
+          headerLeft: () => null,
+        }}
+      >
+        {(props) => (
+          <ProfileSetupScreen {...props} onProfileComplete={onProfileComplete} />
+        )}
+      </Stack.Screen>
+    </Stack.Navigator>
+  );
+}
+
+function MainStack() {
+  return (
+    <Stack.Navigator>
+      <Stack.Screen
+        name="MainTabs"
+        component={TabNavigator}
+        options={{ headerShown: false }}
+      />
+      <Stack.Screen
+        name="Notifications"
+        component={NotificationsScreen}
+        options={{
+          title: 'Notifications',
+          headerStyle: { backgroundColor: theme.colors.primary },
+          headerTintColor: '#fff',
+        }}
+      />
+      <Stack.Screen
+        name="GroupDetail"
+        component={GroupDetailScreen}
+        options={{
+          title: 'Group Details',
+          headerStyle: { backgroundColor: theme.colors.primary },
+          headerTintColor: '#fff',
+        }}
+      />
+      <Stack.Screen
+        name="GroupChat"
+        component={GroupChatScreen}
+        options={{
+          headerStyle: { backgroundColor: theme.colors.primary },
+          headerTintColor: '#fff',
+        }}
+      />
+      <Stack.Screen
+        name="CreateGroup"
+        component={CreateGroupScreen}
+        options={{
+          title: 'Create Study Group',
+          headerStyle: { backgroundColor: theme.colors.primary },
+          headerTintColor: '#fff',
+        }}
+      />
+      <Stack.Screen
+        name="QuizDetail"
+        component={QuizDetailScreen}
+        options={{
+          title: 'Quiz',
+          headerStyle: { backgroundColor: theme.colors.primary },
+          headerTintColor: '#fff',
+        }}
+      />
+      <Stack.Screen
+        name="TakeQuiz"
+        component={TakeQuizScreen}
+        options={{
+          title: 'Take Quiz',
+          headerStyle: { backgroundColor: theme.colors.primary },
+          headerTintColor: '#fff',
+        }}
+      />
+      <Stack.Screen
+        name="CreateQuiz"
+        component={CreateQuizScreen}
+        options={{
+          title: 'Create Quiz',
+          headerStyle: { backgroundColor: theme.colors.primary },
+          headerTintColor: '#fff',
+        }}
+      />
+      <Stack.Screen
+        name="Profile"
+        component={ProfileScreen}
+        options={{
+          title: 'Profile',
+          headerStyle: { backgroundColor: theme.colors.primary },
+          headerTintColor: '#fff',
+        }}
+      />
+      <Stack.Screen
+        name="EditProfile"
+        component={EditProfileScreen}
+        options={{
+          title: 'Edit Profile',
+          headerStyle: { backgroundColor: theme.colors.primary },
+          headerTintColor: '#fff',
+        }}
+      />
+      <Stack.Screen
+        name="LogStudyHours"
+        component={LogStudyHoursScreen}
+        options={{
+          title: 'Log Study Hours',
+          headerStyle: { backgroundColor: theme.colors.primary },
+          headerTintColor: '#fff',
+        }}
+      />
+      <Stack.Screen
+        name="Leaderboard"
+        component={LeaderboardScreen}
+        options={{ title: 'Leaderboard' }}
+      />
+      <Stack.Screen
+        name="PrivacyPolicy"
+        component={PrivacyPolicyScreen}
+        options={{
+          title: 'Privacy Policy',
+          headerStyle: { backgroundColor: theme.colors.primary },
+          headerTintColor: '#fff',
+        }}
+      />
+    </Stack.Navigator>
+  );
+}
+
+function Navigation() {
+  const { user, loading } = useAuth();
+  const [profileCompleted, setProfileCompleted] = useState(null);
+  const [checkingProfile, setCheckingProfile] = useState(true);
+
+  const checkProfileCompletion = useCallback(async () => {
+    if (!user) return;
+    try {
+      const { data, error } = await supabase
+        .from('profiles')
+        .select('profile_completed')
+        .eq('id', user.id)
+        .single();
+      if (error) throw error;
+      setProfileCompleted(data?.profile_completed ?? false);
+    } catch (error) {
+      console.error('Error checking profile completion:', error);
+      setProfileCompleted(false);
+    } finally {
+      setCheckingProfile(false);
+    }
+  }, [user]);
+
+  useEffect(() => {
+    if (user) {
+      checkProfileCompletion();
+    } else {
+      setCheckingProfile(false);
+      setProfileCompleted(null);
+    }
+  }, [user, checkProfileCompletion]);
+
+  useEffect(() => {
+    if (!user) return;
+
+    const channel = supabase
+      .channel(`profile-changes-${user.id}`)
+      .on(
+        'postgres_changes',
+        {
+          event: 'UPDATE',
+          schema: 'public',
+          table: 'profiles',
+          filter: `id=eq.${user.id}`,
+        },
+        () => {
+          checkProfileCompletion();
+        }
+      )
+      .subscribe();
+
+    return () => {
+      supabase.removeChannel(channel);
+    };
+  }, [user, checkProfileCompletion]);
+
+  if (loading || checkingProfile) {
+    return (
+      <View
+        style={{
+          flex: 1,
+          justifyContent: 'center',
+          alignItems: 'center',
+          backgroundColor: theme.colors.background,
+        }}
+      >
+        <ActivityIndicator size="large" color={theme.colors.primary} />
+        <Text style={{ marginTop: 16, color: theme.colors.text }}>Loading...</Text>
+      </View>
+    );
+  }
+
+  return (
+    <NavigationContainer>
+      {!user ? (
+        <AuthStack />
+      ) : profileCompleted === false ? (
+        <SetupStack onProfileComplete={() => setProfileCompleted(true)} />
+      ) : (
+        <MainStack />
+      )}
+    </NavigationContainer>
+  );
+}
+
+export default function App() {
+  return (
+    <PaperProvider theme={theme}>
+      <AuthProvider>
+        <NotificationProvider>
+          <RefreshProvider>
+            <Navigation />
+            <StatusBar style="auto" />
+          </RefreshProvider>
+        </NotificationProvider>
+      </AuthProvider>
+    </PaperProvider>
+  );
+}
+```
+
+---
+
+## Summary of All Changes
+
+| File | What Changed |
+|------|-------------|
+| `supabase.js` | Credentials moved out of source; read from `Constants.expoConfig.extra` |
+| `app.json` | Removed `CAMERA`, `READ_EXTERNAL_STORAGE`, `WRITE_EXTERNAL_STORAGE`; credentials moved to `extra` block |
+| `NotificationContext.js` | Channel name scoped per user to prevent cross-user collisions |
+| `LoginScreen.js` | Removed undefined `ensureProfileExists` call; added Privacy Policy navigation link |
+| `HomeScreen.js` | `joinGroup` now uses `status: 'pending'` and checks for existing membership; groups filtered by `status: 'accepted'` |
+| `ProgressScreen.js` | Replaced global `alert()` with `Alert.alert` from React Native |
+| `TakeQuizScreen.js` | Timer uses `useRef` to avoid stale closure; `submitCalledRef` prevents double submission |
+| `GroupChatScreen.js` | `MemoryCardsGame` replaced `useRef` mutation with state; added `gameFinished` guard against double DB insert |
+| `pushNotificationHelper.js` | `getExpoPushTokenAsync` now passes `projectId` for production EAS builds |
+| `PrivacyPolicyScreen.js` | **New file** — required by Google Play for apps collecting user data |
+| `App.js` | Added `PrivacyPolicy` screen to both `AuthStack` and `MainStack` |

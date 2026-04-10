@@ -1,5 +1,7 @@
 import { supabase } from '../config/supabase';
 
+const MIN_SESSION_HOURS = 1 / 60; // 1 minute minimum
+
 export function startStudySession(userId, groupId) {
   return {
     id: `${userId}-${groupId}-${Date.now()}`,
@@ -15,14 +17,17 @@ export async function endStudySession(session) {
     const start = new Date(session.start_time);
     const diffHours = (now - start) / 1000 / 3600;
 
-    const { error } = await supabase.from('study_progress').insert([
-      {
-        user_id: session.user_id,
-        group_id: session.group_id || null,
-        study_hours: diffHours,
-        logged_at: now.toISOString(),
-      },
-    ]);
+    // FIX #13: ignore sessions shorter than 1 minute
+    if (diffHours < MIN_SESSION_HOURS) {
+      return { success: false, hours: 0, newAchievements: [], reason: 'too_short' };
+    }
+
+    const { error } = await supabase.from('study_progress').insert([{
+      user_id: session.user_id,
+      group_id: session.group_id || null,
+      study_hours: diffHours,
+      logged_at: now.toISOString(),
+    }]);
 
     if (error) throw error;
 
@@ -30,20 +35,18 @@ export async function endStudySession(session) {
     return { success: true, hours: Math.round(diffHours * 10) / 10, newAchievements };
   } catch (err) {
     console.error('Failed to end study session:', err);
-    return { success: false, newAchievements: [] };
+    return { success: false, hours: 0, newAchievements: [] };
   }
 }
 
 export async function logStudyHours(userId, groupId, hours) {
   try {
-    const { error } = await supabase.from('study_progress').insert([
-      {
-        user_id: userId,
-        group_id: groupId || null,
-        study_hours: hours,
-        logged_at: new Date().toISOString(),
-      },
-    ]);
+    const { error } = await supabase.from('study_progress').insert([{
+      user_id: userId,
+      group_id: groupId || null,
+      study_hours: hours,
+      logged_at: new Date().toISOString(),
+    }]);
 
     if (error) throw error;
 
@@ -59,10 +62,8 @@ export async function getTotalStudyHours(userId, groupId = null) {
   try {
     let query = supabase.from('study_progress').select('study_hours').eq('user_id', userId);
     if (groupId) query = query.eq('group_id', groupId);
-
     const { data, error } = await query;
     if (error) throw error;
-
     const total = (data || []).reduce((sum, item) => sum + parseFloat(item.study_hours), 0);
     return Math.round(total * 10) / 10;
   } catch (err) {

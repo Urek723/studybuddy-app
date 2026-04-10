@@ -23,7 +23,7 @@ const DAYS_OF_WEEK = [
   { label: 'Sat', value: 6 },
 ];
 
-export default function ProfileSetupScreen({ navigation }) {
+export default function ProfileSetupScreen({ navigation, onProfileComplete }) {
   const { user } = useAuth();
   const [fullName, setFullName] = useState('');
   const [primarySubject, setPrimarySubject] = useState(null);
@@ -54,10 +54,7 @@ export default function ProfileSetupScreen({ navigation }) {
         .select('full_name')
         .eq('id', user.id)
         .single();
-
-      if (data?.full_name) {
-        setFullName(data.full_name);
-      }
+      if (data?.full_name) setFullName(data.full_name);
     } catch (error) {
       console.error('Error fetching profile:', error);
     }
@@ -66,35 +63,24 @@ export default function ProfileSetupScreen({ navigation }) {
   const addAvailabilitySlot = () => {
     setAvailabilitySlots([
       ...availabilitySlots,
-      {
-        id: Date.now(),
-        days: [],
-        start_time: '09:00',
-        end_time: '17:00',
-      },
+      { id: Date.now(), days: [], start_time: '09:00', end_time: '17:00' },
     ]);
   };
 
   const updateSlot = (id, field, value) => {
-    setAvailabilitySlots(
-      availabilitySlots.map(slot =>
-        slot.id === id ? { ...slot, [field]: value } : slot
-      )
-    );
+    setAvailabilitySlots(availabilitySlots.map(slot =>
+      slot.id === id ? { ...slot, [field]: value } : slot
+    ));
   };
 
   const toggleDayForSlot = (slotId, dayValue) => {
-    setAvailabilitySlots(
-      availabilitySlots.map(slot => {
-        if (slot.id === slotId) {
-          const days = slot.days.includes(dayValue)
-            ? slot.days.filter(d => d !== dayValue)
-            : [...slot.days, dayValue];
-          return { ...slot, days };
-        }
-        return slot;
-      })
-    );
+    setAvailabilitySlots(availabilitySlots.map(slot => {
+      if (slot.id !== slotId) return slot;
+      const days = slot.days.includes(dayValue)
+        ? slot.days.filter(d => d !== dayValue)
+        : [...slot.days, dayValue];
+      return { ...slot, days };
+    }));
   };
 
   const removeSlot = (id) => {
@@ -102,11 +88,9 @@ export default function ProfileSetupScreen({ navigation }) {
   };
 
   const toggleSecondarySubject = (subjectId) => {
-    if (secondarySubjects.includes(subjectId)) {
-      setSecondarySubjects(secondarySubjects.filter(id => id !== subjectId));
-    } else {
-      setSecondarySubjects([...secondarySubjects, subjectId]);
-    }
+    setSecondarySubjects(prev =>
+      prev.includes(subjectId) ? prev.filter(id => id !== subjectId) : [...prev, subjectId]
+    );
   };
 
   const validateStep1 = () => {
@@ -126,7 +110,6 @@ export default function ProfileSetupScreen({ navigation }) {
       Alert.alert('Missing Information', 'Please add at least one availability slot');
       return false;
     }
-
     for (const slot of availabilitySlots) {
       if (slot.days.length === 0) {
         Alert.alert('Incomplete Slot', 'Please select days for all availability slots');
@@ -141,52 +124,45 @@ export default function ProfileSetupScreen({ navigation }) {
   };
 
   const handleNext = () => {
-    if (step === 1 && validateStep1()) {
-      setStep(2);
-    }
+    if (step === 1 && validateStep1()) setStep(2);
   };
 
-const handleComplete = async () => {
-  if (!validateStep2()) return;
-
-  setLoading(true);
-
-  try {
-    // Format availability slots for the RPC function
-    const availabilitySlotsFormatted = [];
-    for (const slot of availabilitySlots) {
-      for (const day of slot.days) {
-        availabilitySlotsFormatted.push({
-          day_of_week: day,
-          start_time: slot.start_time,
-          end_time: slot.end_time,
-        });
+  const handleComplete = async () => {
+    if (!validateStep2()) return;
+    setLoading(true);
+    try {
+      const availabilitySlotsFormatted = [];
+      for (const slot of availabilitySlots) {
+        for (const day of slot.days) {
+          availabilitySlotsFormatted.push({
+            day_of_week: day,
+            start_time: slot.start_time,
+            end_time: slot.end_time,
+          });
+        }
       }
+
+      const { error } = await supabase.rpc('complete_profile_setup', {
+        p_user_id: user.id,
+        p_full_name: fullName.trim(),
+        p_primary_subject_id: primarySubject,
+        p_secondary_subject_ids: secondarySubjects,
+        p_availability_slots: availabilitySlotsFormatted,
+      });
+
+      if (error) throw error;
+
+      // FIX #1: Call onProfileComplete to unblock navigation in App.js
+      if (typeof onProfileComplete === 'function') {
+        onProfileComplete();
+      }
+    } catch (error) {
+      console.error('Error completing setup:', error);
+      Alert.alert('Error', error.message || 'Failed to complete setup. Please try again.');
+    } finally {
+      setLoading(false);
     }
-
-    // Call the RPC function that handles everything
-    const { data, error } = await supabase.rpc('complete_profile_setup', {
-      p_user_id: user.id,
-      p_full_name: fullName.trim(),
-      p_primary_subject_id: primarySubject,
-      p_secondary_subject_ids: secondarySubjects,
-      p_availability_slots: availabilitySlotsFormatted,
-    });
-
-    if (error) throw error;
-
-    setLoading(false);
-  
-    Alert.alert('Success', 'Profile setup completed!');
-    // The realtime listener in App.js will automatically detect the profile update
-    // and navigate to MainStack
-    
-  } catch (error) {
-    console.error('Error completing setup:', error);
-    setLoading(false);
-    Alert.alert('Error', error.message || 'Failed to complete setup. Please try again.');
-  }
-};
+  };
 
   if (step === 1) {
     return (
@@ -224,18 +200,10 @@ const handleComplete = async () => {
               {availableSubjects.map(subject => (
                 <TouchableOpacity
                   key={subject.id}
-                  style={[
-                    styles.subjectCard,
-                    primarySubject === subject.id && styles.subjectCardSelected,
-                  ]}
+                  style={[styles.subjectCard, primarySubject === subject.id && styles.subjectCardSelected]}
                   onPress={() => setPrimarySubject(subject.id)}
                 >
-                  <Text
-                    style={[
-                      styles.subjectName,
-                      primarySubject === subject.id && styles.subjectNameSelected,
-                    ]}
-                  >
+                  <Text style={[styles.subjectName, primarySubject === subject.id && styles.subjectNameSelected]}>
                     {subject.name}
                   </Text>
                 </TouchableOpacity>
@@ -247,27 +215,17 @@ const handleComplete = async () => {
             <Text style={styles.label}>Secondary Subjects (Optional)</Text>
             <Text style={styles.hint}>Select other subjects you're interested in</Text>
             <View style={styles.subjectsGrid}>
-              {availableSubjects
-                .filter(s => s.id !== primarySubject)
-                .map(subject => (
-                  <TouchableOpacity
-                    key={subject.id}
-                    style={[
-                      styles.subjectChip,
-                      secondarySubjects.includes(subject.id) && styles.subjectChipSelected,
-                    ]}
-                    onPress={() => toggleSecondarySubject(subject.id)}
-                  >
-                    <Text
-                      style={[
-                        styles.subjectChipText,
-                        secondarySubjects.includes(subject.id) && styles.subjectChipTextSelected,
-                      ]}
-                    >
-                      {subject.name}
-                    </Text>
-                  </TouchableOpacity>
-                ))}
+              {availableSubjects.filter(s => s.id !== primarySubject).map(subject => (
+                <TouchableOpacity
+                  key={subject.id}
+                  style={[styles.subjectChip, secondarySubjects.includes(subject.id) && styles.subjectChipSelected]}
+                  onPress={() => toggleSecondarySubject(subject.id)}
+                >
+                  <Text style={[styles.subjectChipText, secondarySubjects.includes(subject.id) && styles.subjectChipTextSelected]}>
+                    {subject.name}
+                  </Text>
+                </TouchableOpacity>
+              ))}
             </View>
           </View>
 
@@ -313,18 +271,10 @@ const handleComplete = async () => {
               {DAYS_OF_WEEK.map(day => (
                 <TouchableOpacity
                   key={day.value}
-                  style={[
-                    styles.dayButton,
-                    slot.days.includes(day.value) && styles.dayButtonSelected,
-                  ]}
+                  style={[styles.dayButton, slot.days.includes(day.value) && styles.dayButtonSelected]}
                   onPress={() => toggleDayForSlot(slot.id, day.value)}
                 >
-                  <Text
-                    style={[
-                      styles.dayText,
-                      slot.days.includes(day.value) && styles.dayTextSelected,
-                    ]}
-                  >
+                  <Text style={[styles.dayText, slot.days.includes(day.value) && styles.dayTextSelected]}>
                     {day.label}
                   </Text>
                 </TouchableOpacity>
@@ -341,7 +291,6 @@ const handleComplete = async () => {
                   placeholder="09:00"
                 />
               </View>
-
               <View style={styles.timeGroup}>
                 <Text style={styles.label}>End Time</Text>
                 <TextInput
@@ -361,30 +310,22 @@ const handleComplete = async () => {
         </TouchableOpacity>
 
         <View style={styles.buttonRow}>
-          <TouchableOpacity
-            style={styles.backButton}
-            onPress={() => setStep(1)}
-          >
+          <TouchableOpacity style={styles.backButton} onPress={() => setStep(1)}>
             <Text style={styles.backButtonText}>Back</Text>
           </TouchableOpacity>
-
           <TouchableOpacity
             style={[styles.completeButton, loading && styles.buttonDisabled]}
             onPress={handleComplete}
             disabled={loading}
           >
             <LinearGradient colors={['#22c55e', '#16a34a']} style={styles.buttonGradient}>
-              <Text style={styles.buttonText}>
-                {loading ? 'Saving...' : 'Complete'}
-              </Text>
+              <Text style={styles.buttonText}>{loading ? 'Saving...' : 'Complete'}</Text>
               <MaterialCommunityIcons name="check" size={20} color="#fff" />
             </LinearGradient>
           </TouchableOpacity>
         </View>
 
-        <Text style={styles.skipText}>
-          You can always update this later in your profile settings
-        </Text>
+        <Text style={styles.skipText}>You can always update this later in your profile settings</Text>
       </View>
     </ScrollView>
   );
@@ -448,13 +389,7 @@ const styles = StyleSheet.create({
   slotHeader: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 16 },
   slotTitle: { fontSize: 16, fontWeight: '600', color: '#1e293b' },
   daysRow: { flexDirection: 'row', gap: 6, marginBottom: 16 },
-  dayButton: {
-    flex: 1,
-    backgroundColor: '#f1f5f9',
-    borderRadius: 8,
-    paddingVertical: 8,
-    alignItems: 'center',
-  },
+  dayButton: { flex: 1, backgroundColor: '#f1f5f9', borderRadius: 8, paddingVertical: 8, alignItems: 'center' },
   dayButtonSelected: { backgroundColor: '#6366f1' },
   dayText: { fontSize: 12, fontWeight: '600', color: '#64748b' },
   dayTextSelected: { color: '#fff' },
@@ -481,29 +416,12 @@ const styles = StyleSheet.create({
   },
   addSlotText: { fontSize: 14, fontWeight: '600', color: '#6366f1' },
   buttonRow: { flexDirection: 'row', gap: 12, marginBottom: 16 },
-  backButton: {
-    flex: 1,
-    backgroundColor: '#f1f5f9',
-    borderRadius: 12,
-    paddingVertical: 16,
-    alignItems: 'center',
-  },
+  backButton: { flex: 1, backgroundColor: '#f1f5f9', borderRadius: 12, paddingVertical: 16, alignItems: 'center' },
   backButtonText: { fontSize: 16, fontWeight: '600', color: '#64748b' },
   nextButton: { borderRadius: 12, overflow: 'hidden', marginBottom: 16 },
   completeButton: { flex: 2, borderRadius: 12, overflow: 'hidden' },
   buttonDisabled: { opacity: 0.6 },
-  buttonGradient: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'center',
-    paddingVertical: 16,
-    gap: 8,
-  },
+  buttonGradient: { flexDirection: 'row', alignItems: 'center', justifyContent: 'center', paddingVertical: 16, gap: 8 },
   buttonText: { color: '#fff', fontSize: 16, fontWeight: 'bold' },
-  skipText: {
-    textAlign: 'center',
-    fontSize: 12,
-    color: '#94a3b8',
-    fontStyle: 'italic',
-  },
+  skipText: { textAlign: 'center', fontSize: 12, color: '#94a3b8', fontStyle: 'italic' },
 });

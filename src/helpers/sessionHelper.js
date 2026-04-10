@@ -3,54 +3,50 @@ import { filterActiveSessions } from './sessionCleanupHelper';
 
 /**
  * Fetch all sessions for a specific user (their groups)
- * @param {string} userId
- * @returns {Promise<Array>} Array of sessions
+ * FIX #4: guard the nested async so a failed group query doesn't crash
  */
 export async function fetchGroupSessions(userId) {
-  const { data, error } = await supabase
-    .from('study_sessions')
-    .select(`
-      *,
-      study_groups(name)
-    `)
-    .in(
-      'group_id',
-      (
-        await supabase
-          .from('group_members')
-          .select('group_id')
-          .eq('user_id', userId)
-      ).data.map((g) => g.group_id)
-    )
-    .order('start_time', { ascending: true });
+  try {
+    const { data: memberships, error: memberError } = await supabase
+      .from('group_members')
+      .select('group_id')
+      .eq('user_id', userId);
 
-  if (error) {
-    console.error('fetchGroupSessions error:', error);
+    if (memberError) {
+      console.error('fetchGroupSessions membership error:', memberError);
+      return [];
+    }
+
+    const groupIds = (memberships || []).map((g) => g.group_id);
+    if (groupIds.length === 0) return [];
+
+    const { data, error } = await supabase
+      .from('study_sessions')
+      .select('*, study_groups(name)')
+      .in('group_id', groupIds)
+      .order('start_time', { ascending: true });
+
+    if (error) {
+      console.error('fetchGroupSessions error:', error);
+      return [];
+    }
+
+    return filterActiveSessions(data);
+  } catch (err) {
+    console.error('fetchGroupSessions unexpected error:', err);
     return [];
   }
-
-  // ⭐ CLEANUP HAPPENS HERE
-  return filterActiveSessions(data);
 }
-
 
 /**
  * Check if a new session overlaps with existing sessions for the same group
- * Only checks sessions on the same date as startISO
- * @param {string} groupId
- * @param {string} startISO - Start time in ISO format
- * @param {string} endISO - End time in ISO format
- * @returns {Promise<Array>} overlapping sessions
  */
 export async function isTimeOverlap(groupId, startISO, endISO) {
   try {
     const startDate = new Date(startISO);
     const endDate = new Date(endISO);
-
-    // Extract the date part (YYYY-MM-DD) for filtering
     const dateStr = startDate.toISOString().split('T')[0];
 
-    // Fetch only sessions for this group on the same date
     const { data: sessions, error } = await supabase
       .from('study_sessions')
       .select('id, title, start_time, end_time')
@@ -60,14 +56,11 @@ export async function isTimeOverlap(groupId, startISO, endISO) {
 
     if (error) throw error;
 
-    // Filter for overlapping times
-    const overlapping = sessions.filter((s) => {
+    return sessions.filter((s) => {
       const sStart = new Date(s.start_time);
       const sEnd = new Date(s.end_time);
       return startDate < sEnd && endDate > sStart;
     });
-
-    return overlapping;
   } catch (err) {
     console.error('Error checking session overlap:', err);
     return [];
@@ -75,10 +68,7 @@ export async function isTimeOverlap(groupId, startISO, endISO) {
 }
 
 /**
- * Subscribe to session changes (create, update, delete)
- * @param {string} userId
- * @param {function} callback - called with updated sessions array
- * @returns {function} unsubscribe function
+ * Subscribe to session changes
  */
 export function subscribeSessions(userId, callback) {
   const channel = supabase
@@ -97,4 +87,3 @@ export function subscribeSessions(userId, callback) {
     supabase.removeChannel(channel);
   };
 }
-

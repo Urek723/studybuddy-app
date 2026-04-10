@@ -170,13 +170,12 @@ export default function CalendarScreen({ navigation }) {
     fetchUserGroups();
     loadSessions();
 
-    // ENHANCED: Dynamic updates via Supabase realtime subscriptions
     const unsubSessions = subscribeToTable('study_sessions', null, (payload) => {
       console.log('Session change detected:', payload.eventType);
       loadSessions();
     });
 
-    // Also listen to session participants changes
+    // FIX #2: guard against subscribeToTable returning non-function
     const unsubParticipants = subscribeToTable('session_participants', null, () => {
       if (selectedSession) {
         loadSessionDetail(selectedSession.id);
@@ -184,11 +183,10 @@ export default function CalendarScreen({ navigation }) {
     });
 
     return () => {
-      if (unsubSessions) unsubSessions();
-      if (unsubParticipants) unsubParticipants();
+      if (typeof unsubSessions === 'function') unsubSessions();
+      if (typeof unsubParticipants === 'function') unsubParticipants();
     };
   }, [user]);
-
   // FIXED: Only fetch groups where user is a member with status 'accepted'
   const fetchUserGroups = async () => {
     try {
