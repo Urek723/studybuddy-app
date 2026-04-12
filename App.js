@@ -33,7 +33,7 @@ import LogStudyHoursScreen from './src/screens/progress/LogStudyHoursScreen';
 import LeaderboardScreen from './src/screens/gamification/LeaderboardScreen';
 import NotificationsScreen from './src/screens/notifications/NotificationsScreen';
 import PrivacyPolicyScreen from './src/screens/legal/PrivacyPolicyScreen';
-
+import AboutScreen from './src/screens/profile/AboutScreen';
 const Stack = createNativeStackNavigator();
 const Tab = createBottomTabNavigator();
 
@@ -252,6 +252,15 @@ function MainStack() {
           headerTintColor: '#fff',
         }}
       />
+      <Stack.Screen
+  name="About"
+  component={AboutScreen}
+  options={{
+    title: 'About',
+    headerStyle: { backgroundColor: '#6366f1' },
+    headerTintColor: '#fff',
+  }}
+/>
     </Stack.Navigator>
   );
 }

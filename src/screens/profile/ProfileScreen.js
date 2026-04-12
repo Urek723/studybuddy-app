@@ -188,7 +188,14 @@ export default function ProfileScreen({ navigation }) {
           <MaterialCommunityIcons name="chevron-right" size={24} color="#cbd5e1" />
         </TouchableOpacity>
       </View>
-
+      <TouchableOpacity
+  style={styles.menuItem}
+  onPress={() => navigation.navigate('About')}
+>
+  <MaterialCommunityIcons name="information-outline" size={24} color="#64748b" />
+  <Text style={styles.menuText}>About</Text>
+  <MaterialCommunityIcons name="chevron-right" size={24} color="#cbd5e1" />
+</TouchableOpacity>
       <View style={styles.section}>
         <TouchableOpacity style={styles.logoutButton} onPress={handleLogout}>
           <MaterialCommunityIcons name="logout" size={20} color="#ef4444" />
