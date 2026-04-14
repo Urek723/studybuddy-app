@@ -4,7 +4,7 @@ export default {
   expo: {
     name: "StudyBuddy",
     slug: "studybuddy-app",
-    scheme: "com.studybuddy.app",
+    scheme: "com.reylaurencekianashleijohnlloyd.studybuddy.v1",
     version: "1.0.1",
     orientation: "portrait",
     icon: "./assets/icon.png",
@@ -17,9 +17,9 @@ export default {
     assetBundlePatterns: ["**/*"],
     ios: {
       supportsTablet: true,
-      bundleIdentifier: "com.studybuddy.app",
+      bundleIdentifier: "com.reylaurencekianashleijohnlloyd.studybuddy.v1",
       infoPlist: {
-        CFBundleURLTypes: [{ CFBundleURLSchemes: ["com.studybuddy.app"] }]
+        CFBundleURLTypes: [{ CFBundleURLSchemes: ["com.reylaurencekianashleijohnlloyd.studybuddy.v1"] }]
       }
     },
     android: {
@@ -28,14 +28,14 @@ export default {
         backgroundColor: "#ffffff"
       },
       versionCode: 2,
-      package: "com.studybuddy.app",
+      package: "com.reylaurencekianashleijohnlloyd.studybuddy.v1",
       useNextNotificationsApi: true,
       permissions: ["NOTIFICATIONS", "RECEIVE_BOOT_COMPLETED"],
       intentFilters: [
         {
           action: "VIEW",
           autoVerify: true,
-          data: [{ scheme: "com.studybuddy.app", host: "auth", pathPrefix: "/callback" }],
+          data: [{ scheme: "com.reylaurencekianashleijohnlloyd.studybuddy.v1", host: "auth", pathPrefix: "/callback" }],
           category: ["BROWSABLE", "DEFAULT"]
         }
       ]
